@@ -8,6 +8,7 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent
+from .config import load_system_prompt
 
 
 def _md_to_rich(text: str) -> str:
@@ -53,7 +54,7 @@ class AgentApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
-        self._messages: list = []
+        self._messages: list = [{"role": "system", "content": load_system_prompt()}]
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self._send(event.value)
