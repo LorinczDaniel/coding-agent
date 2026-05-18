@@ -1,0 +1,10 @@
+# Custom instructions
+
+Add your personal instructions below. This file is appended to the agent's
+built-in system prompt. Copy this file to `system.md` to activate it.
+
+Examples:
+- Prefer Python over shell scripts when both would work
+- Always write tests alongside new code
+- Keep responses concise — skip the preamble
+- When editing files, show a summary of what changed
