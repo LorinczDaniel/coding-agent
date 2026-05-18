@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from app.config import _BASE_PROMPT, load_system_prompt
 
 
@@ -22,11 +23,7 @@ def test_base_always_present_when_system_md_exists(tmp_path, monkeypatch):
 
 def test_unreadable_system_md_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    system_md = tmp_path / "system.md"
-    system_md.write_text("content", encoding="utf-8")
-    system_md.chmod(0o000)
-    try:
+    (tmp_path / "system.md").write_text("content", encoding="utf-8")
+    with patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
         with pytest.raises(RuntimeError, match="Could not read system.md"):
             load_system_prompt()
-    finally:
-        system_md.chmod(0o644)
