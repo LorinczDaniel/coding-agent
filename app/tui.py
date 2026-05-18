@@ -1,0 +1,143 @@
+import json
+import re
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.widgets import Header, RichLog, Input, Button
+from textual.containers import Horizontal
+from textual import work
+from rich.markup import escape
+from rich.text import Text
+from .agent import run_agent
+
+
+def _md_to_rich(text: str) -> str:
+    s = escape(text)
+    s = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/bold]', s)
+    s = re.sub(r'`(.+?)`', r'[code]\1[/code]', s)
+    return s
+
+
+class AgentApp(App):
+    TITLE = "Agent Daniel"
+    BINDINGS = [Binding("ctrl+x", "quit", "Quit", priority=True)]
+
+    CSS = """
+    #chat-log {
+        height: 1fr;
+        padding: 0 1;
+    }
+
+    #input-bar {
+        height: 3;
+        dock: bottom;
+        padding: 0 1;
+    }
+
+    #user-input {
+        width: 1fr;
+    }
+
+    #send-btn {
+        width: 8;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield RichLog(id="chat-log", wrap=True, highlight=False, markup=True)
+        yield Horizontal(
+            Input(placeholder="Type a message...", id="user-input"),
+            Button("Send", id="send-btn", variant="success"),
+            id="input-bar",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#user-input", Input).focus()
+        self._messages: list = []
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._send(event.value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "send-btn":
+            self._send(self.query_one("#user-input", Input).value)
+
+    def _send(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        log = self.query_one("#chat-log", RichLog)
+        inp = self.query_one("#user-input", Input)
+        inp.value = ""
+        inp.disabled = True
+        self.query_one("#send-btn", Button).disabled = True
+        log.write(Text.assemble(("You: ", "bold green"), (text, "white")))
+        self._messages.append({"role": "user", "content": text})
+        self._run_agent()
+
+    @work(exclusive=True)
+    async def _run_agent(self) -> None:
+        log = self.query_one("#chat-log", RichLog)
+        first_text_chunk = True
+        text_buffer: list[str] = []
+
+        def flush_buffer() -> None:
+            nonlocal first_text_chunk
+            text = "".join(text_buffer)
+            text_buffer.clear()
+            if not text:
+                return
+            rendered = _md_to_rich(text)
+            if first_text_chunk:
+                log.write(f"[bold blue]Agent:[/bold blue] {rendered}")
+                first_text_chunk = False
+            else:
+                log.write(rendered)
+
+        def on_text(delta: str) -> None:
+            text_buffer.append(delta)
+            combined = "".join(text_buffer)
+            if "\n" in combined:
+                lines = combined.split("\n")
+                incomplete = lines[-1]
+                for line in lines[:-1]:
+                    text_buffer.clear()
+                    text_buffer.append(line)
+                    flush_buffer()
+                text_buffer.clear()
+                text_buffer.append(incomplete)
+
+        def on_tool_start(name: str, args_json: str) -> None:
+            nonlocal first_text_chunk
+            flush_buffer()
+            if not first_text_chunk:
+                first_text_chunk = True
+            try:
+                args = json.loads(args_json)
+                cmd = str(next(iter(args.values()), ""))
+            except Exception:
+                cmd = args_json
+            log.write(Text.assemble(("┌─ ", "dim"), (name, "bold yellow"), (" ──────────────────────", "dim")))
+            log.write(Text.assemble(("│ ", "dim"), (cmd, "dim white")))
+
+        def on_tool_result(_name: str, result: str) -> None:
+            nonlocal first_text_chunk
+            first_text_chunk = True
+            lines = result.strip().splitlines()
+            for line in lines[:15]:
+                log.write(Text.assemble(("│ ", "dim"), (line, "white")))
+            if len(lines) > 15:
+                log.write(Text.assemble(("│ ", "dim"), (f"... ({len(lines) - 15} more lines)", "dim")))
+            log.write(Text("└──────────────────────────────────", style="dim"))
+            log.write("")
+
+        try:
+            await run_agent(self._messages, on_text, on_tool_start, on_tool_result)
+        except Exception as e:
+            log.write(Text.assemble(("Error: ", "bold red"), (str(e), "white")))
+        finally:
+            flush_buffer()
+            inp = self.query_one("#user-input", Input)
+            inp.disabled = False
+            self.query_one("#send-btn", Button).disabled = False
+            inp.focus()
