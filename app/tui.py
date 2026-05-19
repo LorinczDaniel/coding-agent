@@ -9,6 +9,7 @@ from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent
 from .config import load_system_prompt
+from .session import clear_session, load_session, save_session
 
 
 def _md_to_rich(text: str) -> str:
@@ -54,7 +55,21 @@ class AgentApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
-        self._messages: list = [{"role": "system", "content": load_system_prompt()}]
+        log = self.query_one("#chat-log", RichLog)
+        saved = load_session()
+        if saved is not None:
+            self._messages: list = saved
+            user_turns = sum(1 for m in saved if m.get("role") == "user")
+            log.write(Text.assemble(
+                ("Loaded previous session ", "dim"),
+                (f"({user_turns} user turn{'s' if user_turns != 1 else ''}). ", "dim"),
+                ("Type ", "dim"),
+                ("/clear", "bold yellow"),
+                (" to start fresh.", "dim"),
+            ))
+            log.write("")
+        else:
+            self._messages = [{"role": "system", "content": load_system_prompt()}]
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self._send(event.value)
@@ -70,6 +85,15 @@ class AgentApp(App):
         log = self.query_one("#chat-log", RichLog)
         inp = self.query_one("#user-input", Input)
         inp.value = ""
+
+        if text == "/clear":
+            self._messages = [{"role": "system", "content": load_system_prompt()}]
+            clear_session()
+            log.clear()
+            log.write(Text("Conversation cleared.", style="dim"))
+            log.write("")
+            return
+
         inp.disabled = True
         self.query_one("#send-btn", Button).disabled = True
         log.write("")
@@ -141,6 +165,7 @@ class AgentApp(App):
             log.write(Text.assemble(("Error: ", "bold red"), (str(e), "white")))
         finally:
             flush_buffer()
+            save_session(self._messages)
             inp = self.query_one("#user-input", Input)
             inp.disabled = False
             self.query_one("#send-btn", Button).disabled = False

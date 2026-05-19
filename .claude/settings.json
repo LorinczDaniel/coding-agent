@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -m pytest --version)",
+      "Bash(python -m pytest -v)",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && git log --oneline -10)",
+      "Read(///wsl.localhost/Ubuntu/home/daniellorincz/personal/**)",
+      "Bash(grep -c \"pytest\" \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python/uv.lock\" 2>&1 | head -5)",
+      "Read(///wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python/**)",
+      "Bash(grep -i \"pytest\" \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python/uv.lock\")",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && uv sync --group dev)",
+      "Bash(pip list *)",
+      "Bash(python -m uv sync --group dev)",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && ls -la | head -20)",
+      "Bash(rm -rf .venv)",
+      "Bash(unset VIRTUAL_ENV)",
+      "Bash(python -m uv sync --group dev --no-venv)",
+      "Bash(python -m uv sync --help)",
+      "Bash(python -m uv sync --only-dev)",
+      "Bash(mv .venv .venv.bak)",
+      "Bash(grep -c \"pytest\" \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python/uv.lock\")",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && git add uv.lock && git commit -m \"chore: sync uv.lock with dev dependencies\")",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && git log --oneline -1)",
+      "Bash(uv run *)",
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\daniellorincz\\\\personal\\\\codecrafters-claude-code-python\")",
+      "Bash(find /home -name \"codecrafters-claude-code-python\" -type d 2>/dev/null | head -5)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(.venv/Scripts/pytest tests/test_config.py -v)",
+      "Bash(.venv/Scripts/pytest tests/test_config.py::test_unreadable_system_md_raises -v -s)",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && git add app/config.py tests/test_config.py && git commit -m \"feat: add config module with load_system_prompt\")",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && uv run pytest tests/test_config.py -v 2>&1)",
+      "Bash(git -C /mnt/wsl/instances/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python log --oneline -5)",
+      "Bash(git -C \"\\\\\\\\\\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\daniellorincz\\\\\\\\personal\\\\\\\\codecrafters-claude-code-python\" log --oneline -3)",
+      "Bash(~/.local/bin/uv run *)",
+      "Bash(git -C /home/daniellorincz/personal/codecrafters-claude-code-python log --oneline -3)",
+      "Skill(superpowers:finishing-a-development-branch)",
+      "Skill(superpowers:finishing-a-development-branch:*)",
+      "Bash(cd \"//wsl.localhost/Ubuntu/home/daniellorincz/personal/codecrafters-claude-code-python\" && git log --oneline -3)",
+      "PowerShell(wsl -d Ubuntu -- bash -c \"cd /home/daniellorincz/personal/codecrafters-claude-code-python && ~/.local/bin/uv run pytest -v 2>&1\")"
+    ],
+    "additionalDirectories": [
+      "\\home\\daniellorincz\\personal\\codecrafters-claude-code-python\\tests",
+      "\\\\wsl.localhost\\Ubuntu\\home\\daniellorincz\\personal\\codecrafters-claude-code-python\\tests",
+      "\\home\\daniellorincz\\personal\\codecrafters-claude-code-python",
+      "\\\\wsl.localhost\\Ubuntu\\home\\daniellorincz\\personal\\codecrafters-claude-code-python"
+    ]
+  }
+}

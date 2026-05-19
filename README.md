@@ -15,8 +15,14 @@ claude-agent gives you a conversational interface to an AI that can actually act
 | **Read** | Reads and returns the full contents of any file |
 | **Write** | Creates or overwrites a file with content the agent provides |
 | **Bash** | Runs any shell command and returns stdout + stderr |
+| **Glob** | Finds files matching a glob pattern (e.g. `**/*.py`) |
+| **Grep** | Searches file contents with a regex |
 
 The agent can chain these freely. Ask it to "refactor this file" and it will read it, figure out the changes, write the result, and confirm — without you doing anything in between.
+
+### Project context
+
+On startup the agent is told its working directory and a guess at the project type (Python / Node / Rust / Go / Java, inferred from marker files like `pyproject.toml`, `package.json`, etc.). This means it knows things like "you're in `/home/me/my-project`, a Python project" without you having to spell it out every time.
 
 ### UI features
 
@@ -32,6 +38,7 @@ The agent can chain these freely. Ask it to "refactor this file" and it will rea
   ```
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
+- **Session persistence** — conversation history is auto-saved to `.agent_session.json` in the working directory after every agent turn, and auto-loaded on startup. Quit and relaunch and the agent picks up where you left off.
 
 ---
 
@@ -99,6 +106,12 @@ Type a message and press **Enter** or click **Send**. The agent streams its resp
 | `Enter` | Send message |
 | `Ctrl+X` | Quit |
 
+### Commands
+
+| Command | Action |
+|---|---|
+| `/clear` | Reset the conversation back to just the system prompt and delete the saved session file. Useful when the context gets long, expensive, or off-track. |
+
 ### Example prompts
 
 **Explore a codebase**
@@ -145,15 +158,17 @@ Any OpenAI-compatible model available on OpenRouter will work.
 ```
 app/
   main.py      # entry point — launches the Textual app
-  tui.py       # Textual App, layout, streaming callbacks
+  tui.py       # Textual App, layout, streaming callbacks, /clear handling
   agent.py     # async agent loop, OpenRouter streaming, tool dispatch
-  tools.py     # Read, Write, Bash implementations + OpenAI tool schemas
+  tools.py     # Read, Write, Bash, Glob, Grep implementations + tool schemas
+  config.py    # system prompt + working-directory / project-type injection
+  session.py   # save/load/clear the .agent_session.json conversation file
 ```
 
 ---
 
 ## Limitations
 
-- No session persistence — conversation history is lost when you quit
 - Tool output is capped at 15 lines in the UI (full output is still sent to the model)
 - No parallel tool execution — tools run sequentially
+- Session file is per-directory — launching the agent from a different cwd starts a fresh conversation
