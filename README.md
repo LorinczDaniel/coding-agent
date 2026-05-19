@@ -40,6 +40,7 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
 - **Session persistence** — conversation history is auto-saved to `.agent_session.json` in the working directory after every agent turn, and auto-loaded on startup. Quit and relaunch and the agent picks up where you left off.
+- **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
 
 ---
 
@@ -164,6 +165,7 @@ app/
   tools.py     # Read, Write, Edit, Bash, Glob, Grep implementations + tool schemas
   config.py    # system prompt + working-directory / project-type injection
   session.py   # save/load/clear the .agent_session.json conversation file
+  format.py    # UI-agnostic formatting helpers (usage / cost line)
 ```
 
 ---
