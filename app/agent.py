@@ -18,6 +18,7 @@ async def run_agent(
     on_text: Callable[[str], None],
     on_tool_start: Callable[[str, str], None],
     on_tool_result: Callable[[str, str], None],
+    on_usage: Callable[[int, int, float], None] | None = None,
 ) -> None:
     if not API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -27,15 +28,20 @@ async def run_agent(
     while True:
         tool_calls_acc: dict[int, dict] = {}
         text_chunks: list[str] = []
+        usage_obj = None
 
         stream = await client.chat.completions.create(
             model="anthropic/claude-haiku-4.5",
             messages=messages,
             tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL],
             stream=True,
+            stream_options={"include_usage": True},
+            extra_body={"usage": {"include": True}},
         )
 
         async for chunk in stream:
+            if getattr(chunk, "usage", None):
+                usage_obj = chunk.usage
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -55,6 +61,12 @@ async def run_agent(
                         }
                     if tc.function and tc.function.arguments:
                         tool_calls_acc[idx]["arguments"] += tc.function.arguments
+
+        if on_usage is not None and usage_obj is not None:
+            prompt = getattr(usage_obj, "prompt_tokens", 0) or 0
+            completion = getattr(usage_obj, "completion_tokens", 0) or 0
+            cost = getattr(usage_obj, "cost", 0.0) or 0.0
+            on_usage(prompt, completion, float(cost))
 
         assistant_msg: dict = {"role": "assistant", "content": "".join(text_chunks) or None}
         if tool_calls_acc:

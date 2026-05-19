@@ -2,13 +2,14 @@ import json
 import re
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Header, RichLog, Input, Button
-from textual.containers import Horizontal
+from textual.widgets import Header, RichLog, Input, Button, Static
+from textual.containers import Horizontal, Vertical
 from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent
 from .config import load_system_prompt
+from .format import format_usage
 from .session import clear_session, load_session, save_session
 
 
@@ -29,9 +30,20 @@ class AgentApp(App):
         padding: 0 1;
     }
 
+    #bottom-bar {
+        height: 4;
+        dock: bottom;
+    }
+
+    #usage-bar {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+        background: $panel;
+    }
+
     #input-bar {
         height: 3;
-        dock: bottom;
         padding: 0 1;
     }
 
@@ -47,14 +59,19 @@ class AgentApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield RichLog(id="chat-log", wrap=True, highlight=False, markup=True)
-        yield Horizontal(
-            Input(placeholder="Type a message...", id="user-input"),
-            Button("Send", id="send-btn", variant="success"),
-            id="input-bar",
-        )
+        with Vertical(id="bottom-bar"):
+            yield Static(format_usage(0, 0, 0.0), id="usage-bar")
+            yield Horizontal(
+                Input(placeholder="Type a message...", id="user-input"),
+                Button("Send", id="send-btn", variant="success"),
+                id="input-bar",
+            )
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
+        self._total_in = 0
+        self._total_out = 0
+        self._total_cost = 0.0
         log = self.query_one("#chat-log", RichLog)
         saved = load_session()
         if saved is not None:
@@ -159,8 +176,16 @@ class AgentApp(App):
             log.write(Text("└" + "─" * 42, style="dim"))
             log.write("")
 
+        def on_usage(prompt: int, completion: int, cost: float) -> None:
+            self._total_in += prompt
+            self._total_out += completion
+            self._total_cost += cost
+            self.query_one("#usage-bar", Static).update(
+                format_usage(self._total_in, self._total_out, self._total_cost)
+            )
+
         try:
-            await run_agent(self._messages, on_text, on_tool_start, on_tool_result)
+            await run_agent(self._messages, on_text, on_tool_start, on_tool_result, on_usage)
         except Exception as e:
             log.write(Text.assemble(("Error: ", "bold red"), (str(e), "white")))
         finally:
