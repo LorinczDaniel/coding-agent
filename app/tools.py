@@ -68,6 +68,23 @@ GLOB_TOOL = {
     },
 }
 
+GREP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Grep",
+        "description": "Search file contents for lines matching a regex pattern.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {"type": "string", "description": "Directory or file to search in (default: current directory)"},
+                "include": {"type": "string", "description": "Filename glob filter, e.g. '*.py' (default: '*')"},
+            },
+            "required": ["pattern"],
+        },
+    },
+}
+
 
 def Read(file_path: str) -> str:
     try:
@@ -115,6 +132,47 @@ def Glob(pattern: str, path: str = ".") -> str:
         result = "\n".join(matches[:cap])
         if total > cap:
             result += f"\n(showing {cap} of {total} results)"
+        return result
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def Grep(pattern: str, path: str = ".", include: str = "*") -> str:
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid pattern: {e}"
+    try:
+        base = Path(path)
+        if not base.exists():
+            return f"Error: path does not exist: {path}"
+        files = (
+            [base] if base.is_file()
+            else sorted(
+                p for p in base.rglob(include)
+                if p.is_file() and not any(part in _SKIP_DIRS for part in p.parts)
+            )
+        )
+        base_for_rel = base.parent if base.is_file() else base
+        matches: list[str] = []
+        total = 0
+        cap = 100
+        for filepath in files:
+            try:
+                lines = filepath.read_text(encoding="utf-8").splitlines()
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(lines, 1):
+                if regex.search(line):
+                    total += 1
+                    if total <= cap:
+                        rel = filepath.relative_to(base_for_rel)
+                        matches.append(f"{rel}:{lineno}: {line}")
+        if not matches:
+            return "No matches found."
+        result = "\n".join(matches)
+        if total > cap:
+            result += f"\n(showing {cap} of {total} matches)"
         return result
     except Exception as e:
         return f"Error: {e}"
