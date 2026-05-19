@@ -13,7 +13,8 @@ claude-agent gives you a conversational interface to an AI that can actually act
 | Tool | What it does |
 |---|---|
 | **Read** | Reads and returns the full contents of any file |
-| **Write** | Creates or overwrites a file with content the agent provides |
+| **Write** | Creates a new file or fully overwrites an existing one |
+| **Edit** | Replaces an exact string in an existing file (preferred for modifications) |
 | **Bash** | Runs any shell command and returns stdout + stderr |
 | **Glob** | Finds files matching a glob pattern (e.g. `**/*.py`) |
 | **Grep** | Searches file contents with a regex |
@@ -160,7 +161,7 @@ app/
   main.py      # entry point — launches the Textual app
   tui.py       # Textual App, layout, streaming callbacks, /clear handling
   agent.py     # async agent loop, OpenRouter streaming, tool dispatch
-  tools.py     # Read, Write, Bash, Glob, Grep implementations + tool schemas
+  tools.py     # Read, Write, Edit, Bash, Glob, Grep implementations + tool schemas
   config.py    # system prompt + working-directory / project-type injection
   session.py   # save/load/clear the .agent_session.json conversation file
 ```

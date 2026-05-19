@@ -3,7 +3,10 @@ import os
 from typing import Callable
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from .tools import Bash, Glob, Grep, Read, Write, BASH_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL
+from .tools import (
+    Bash, Edit, Glob, Grep, Read, Write,
+    BASH_TOOL, EDIT_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL,
+)
 
 load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -28,7 +31,7 @@ async def run_agent(
         stream = await client.chat.completions.create(
             model="anthropic/claude-haiku-4.5",
             messages=messages,
-            tools=[READ_TOOL, WRITE_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL],
+            tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL],
             stream=True,
         )
 
@@ -76,6 +79,13 @@ async def run_agent(
                 result = Read(args["file_path"])
             elif tc["name"] == "Write":
                 result = Write(args["file_path"], args["content"])
+            elif tc["name"] == "Edit":
+                result = Edit(
+                    args["file_path"],
+                    args["old_string"],
+                    args["new_string"],
+                    args.get("replace_all", False),
+                )
             elif tc["name"] == "Bash":
                 result = Bash(args["command"])
             elif tc["name"] == "Glob":

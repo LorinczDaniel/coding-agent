@@ -25,7 +25,7 @@ WRITE_TOOL = {
     "type": "function",
     "function": {
         "name": "Write",
-        "description": "Write content to a file.",
+        "description": "Write content to a file. Overwrites the file if it exists. Prefer Edit for modifying existing files.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -33,6 +33,32 @@ WRITE_TOOL = {
                 "content": {"type": "string", "description": "The content to write to the file."},
             },
             "required": ["file_path", "content"],
+        },
+    },
+}
+
+EDIT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Edit",
+        "description": (
+            "Replace a string in a file. Prefer this over Write when modifying an existing file. "
+            "`old_string` must match exactly, including whitespace and indentation. "
+            "Fails if `old_string` is not found, or if it appears more than once unless `replace_all` is true. "
+            "When the match is ambiguous, expand `old_string` with surrounding context until it is unique."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "The path of the file to edit."},
+                "old_string": {"type": "string", "description": "The exact text to replace."},
+                "new_string": {"type": "string", "description": "The replacement text."},
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace every occurrence instead of requiring a unique match. Default false.",
+                },
+            },
+            "required": ["file_path", "old_string", "new_string"],
         },
     },
 }
@@ -105,6 +131,38 @@ def Write(file_path: str, content: str) -> str:
         error_msg = f"Error writing to file: {e}"
         print(error_msg, file=sys.stderr)
         return error_msg
+
+
+def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+    if old_string == "":
+        return "Error: old_string is empty. Use Write to create a new file."
+    if old_string == new_string:
+        return "Error: old_string and new_string are identical — no edit to apply."
+    path = Path(file_path)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"Error: file not found: {file_path}"
+    except OSError as e:
+        return f"Error reading file: {e}"
+    count = content.count(old_string)
+    if count == 0:
+        return (
+            f"Error: old_string not found in {file_path}. "
+            "Make sure whitespace and indentation match exactly."
+        )
+    if count > 1 and not replace_all:
+        return (
+            f"Error: old_string matches {count} locations in {file_path}. "
+            "Expand it with surrounding context to make it unique, or pass replace_all=true."
+        )
+    new_content = content.replace(old_string, new_string)
+    try:
+        path.write_text(new_content, encoding="utf-8")
+    except OSError as e:
+        return f"Error writing file: {e}"
+    suffix = f" ({count} replacements)" if count > 1 else ""
+    return f"Edited {file_path}{suffix}"
 
 
 def Bash(command: str) -> str:

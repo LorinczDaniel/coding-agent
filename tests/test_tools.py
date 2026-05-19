@@ -1,4 +1,4 @@
-from app.tools import Glob, Grep
+from app.tools import Edit, Glob, Grep
 
 
 # --- Glob ---
@@ -104,3 +104,70 @@ def test_grep_no_matches(tmp_path):
     (tmp_path / "a.py").write_text("nothing here\n")
     result = Grep("zzznomatch", str(tmp_path))
     assert result == "No matches found."
+
+
+# --- Edit ---
+
+def test_edit_unique_match(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\ny = 2\n")
+    result = Edit(str(f), "x = 1", "x = 42")
+    assert result.startswith("Edited")
+    assert f.read_text() == "x = 42\ny = 2\n"
+
+
+def test_edit_preserves_indentation(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("def f():\n    return 1\n")
+    result = Edit(str(f), "    return 1", "    return 2")
+    assert result.startswith("Edited")
+    assert f.read_text() == "def f():\n    return 2\n"
+
+
+def test_edit_no_match(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("hello\n")
+    result = Edit(str(f), "world", "earth")
+    assert result.startswith("Error:")
+    assert "not found" in result
+    assert f.read_text() == "hello\n"
+
+
+def test_edit_multiple_matches_without_replace_all(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x\nx\nx\n")
+    result = Edit(str(f), "x", "y")
+    assert result.startswith("Error:")
+    assert "3 locations" in result
+    assert f.read_text() == "x\nx\nx\n"
+
+
+def test_edit_replace_all(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x\nx\nx\n")
+    result = Edit(str(f), "x", "y", replace_all=True)
+    assert result.startswith("Edited")
+    assert "3 replacements" in result
+    assert f.read_text() == "y\ny\ny\n"
+
+
+def test_edit_empty_old_string(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("hello\n")
+    result = Edit(str(f), "", "x")
+    assert result.startswith("Error:")
+    assert "Use Write" in result
+
+
+def test_edit_identical_strings(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("hello\n")
+    result = Edit(str(f), "hello", "hello")
+    assert result.startswith("Error:")
+    assert "identical" in result
+
+
+def test_edit_missing_file(tmp_path):
+    result = Edit(str(tmp_path / "nope.py"), "a", "b")
+    assert result.startswith("Error:")
+    assert "not found" in result
