@@ -1,5 +1,9 @@
+import re
 import subprocess
 import sys
+from pathlib import Path
+
+_SKIP_DIRS = {".git", ".venv"}
 
 
 READ_TOOL = {
@@ -48,6 +52,22 @@ BASH_TOOL = {
     },
 }
 
+GLOB_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Glob",
+        "description": "Find files matching a glob pattern. Use ** for recursive search (e.g. **/*.py).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py' or 'src/*.ts'"},
+                "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
+            },
+            "required": ["pattern"],
+        },
+    },
+}
+
 
 def Read(file_path: str) -> str:
     try:
@@ -76,3 +96,25 @@ def Bash(command: str) -> str:
     if result.stderr:
         output += result.stderr
     return output
+
+
+def Glob(pattern: str, path: str = ".") -> str:
+    try:
+        base = Path(path)
+        if not base.exists():
+            return f"Error: path does not exist: {path}"
+        matches = sorted(
+            str(p.relative_to(base))
+            for p in base.glob(pattern)
+            if not any(part in _SKIP_DIRS for part in p.parts)
+        )
+        if not matches:
+            return "No files found."
+        total = len(matches)
+        cap = 50
+        result = "\n".join(matches[:cap])
+        if total > cap:
+            result += f"\n(showing {cap} of {total} results)"
+        return result
+    except Exception as e:
+        return f"Error: {e}"
