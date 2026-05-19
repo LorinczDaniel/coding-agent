@@ -72,6 +72,7 @@ class AgentApp(App):
         inp.value = ""
         inp.disabled = True
         self.query_one("#send-btn", Button).disabled = True
+        log.write("")
         log.write(Text.assemble(("You: ", "bold green"), (text, "white")))
         self._messages.append({"role": "user", "content": text})
         self._run_agent()
@@ -90,6 +91,7 @@ class AgentApp(App):
                 return
             rendered = _md_to_rich(text)
             if first_text_chunk:
+                log.write("")
                 log.write(f"[bold blue]Agent:[/bold blue] {rendered}")
                 first_text_chunk = False
             else:
@@ -115,11 +117,12 @@ class AgentApp(App):
                 first_text_chunk = True
             try:
                 args = json.loads(args_json)
-                cmd = str(next(iter(args.values()), ""))
+                args_str = "  ".join(f"{k}={v}" for k, v in args.items())
             except Exception:
-                cmd = args_json
-            log.write(Text.assemble(("┌─ ", "dim"), (name, "bold yellow"), (" ──────────────────────", "dim")))
-            log.write(Text.assemble(("│ ", "dim"), (cmd, "dim white")))
+                args_str = args_json
+            sep = "─" * max(4, 40 - len(name))
+            log.write(Text.assemble(("┌─ ", "dim"), (name, "bold yellow"), (f" {sep}", "dim")))
+            log.write(Text.assemble(("│ ", "dim"), (args_str, "dim white")))
 
         def on_tool_result(_name: str, result: str) -> None:
             nonlocal first_text_chunk
@@ -129,7 +132,7 @@ class AgentApp(App):
                 log.write(Text.assemble(("│ ", "dim"), (line, "white")))
             if len(lines) > 15:
                 log.write(Text.assemble(("│ ", "dim"), (f"... ({len(lines) - 15} more lines)", "dim")))
-            log.write(Text("└──────────────────────────────────", style="dim"))
+            log.write(Text("└" + "─" * 42, style="dim"))
             log.write("")
 
         try:
