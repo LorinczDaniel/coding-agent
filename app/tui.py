@@ -3,7 +3,7 @@ import re
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Header, RichLog, Input, Button, Static
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual import work
 from rich.markup import escape
 from rich.text import Text
@@ -30,9 +30,13 @@ class AgentApp(App):
         padding: 0 1;
     }
 
+    #bottom-bar {
+        height: 4;
+        dock: bottom;
+    }
+
     #usage-bar {
         height: 1;
-        dock: bottom;
         padding: 0 1;
         color: $text-muted;
         background: $panel;
@@ -40,7 +44,6 @@ class AgentApp(App):
 
     #input-bar {
         height: 3;
-        dock: bottom;
         padding: 0 1;
     }
 
@@ -56,12 +59,13 @@ class AgentApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield RichLog(id="chat-log", wrap=True, highlight=False, markup=True)
-        yield Horizontal(
-            Input(placeholder="Type a message...", id="user-input"),
-            Button("Send", id="send-btn", variant="success"),
-            id="input-bar",
-        )
-        yield Static(format_usage(0, 0, 0.0), id="usage-bar")
+        with Vertical(id="bottom-bar"):
+            yield Static(format_usage(0, 0, 0.0), id="usage-bar")
+            yield Horizontal(
+                Input(placeholder="Type a message...", id="user-input"),
+                Button("Send", id="send-btn", variant="success"),
+                id="input-bar",
+            )
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
