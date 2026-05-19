@@ -9,6 +9,7 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent
+from .confirm_modal import ConfirmModal
 from .config import load_system_prompt
 from .format import format_usage
 from .session import clear_session, load_session, save_session
@@ -19,6 +20,16 @@ def _md_to_rich(text: str) -> str:
     s = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/bold]', s)
     s = re.sub(r'`(.+?)`', r'[code]\1[/code]', s)
     return s
+
+
+def _format_tool_args(args: dict) -> str:
+    parts = []
+    for k, v in args.items():
+        text = str(v)
+        if len(text) > 200:
+            text = text[:200] + "…"
+        parts.append(f"{k}: {text}")
+    return "\n".join(parts)
 
 
 class AgentApp(App):
@@ -192,8 +203,20 @@ class AgentApp(App):
                 format_usage(self._total_in, self._total_out, self._total_cost)
             )
 
+        async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
+            flush_buffer()
+            body = _format_tool_args(args)
+            return await self.push_screen_wait(ConfirmModal(name, reason, body))
+
         try:
-            await run_agent(self._messages, on_text, on_tool_start, on_tool_result, on_usage)
+            await run_agent(
+                self._messages,
+                on_text,
+                on_tool_start,
+                on_tool_result,
+                on_usage,
+                on_tool_confirm,
+            )
         except asyncio.CancelledError:
             flush_buffer()
             del self._messages[self._safe_msg_count:]
