@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from textual.app import App, ComposeResult
@@ -22,7 +23,10 @@ def _md_to_rich(text: str) -> str:
 
 class AgentApp(App):
     TITLE = "Agent Daniel"
-    BINDINGS = [Binding("ctrl+x", "quit", "Quit", priority=True)]
+    BINDINGS = [
+        Binding("ctrl+x", "quit", "Quit", priority=True),
+        Binding("escape", "interrupt", "Interrupt", priority=True),
+    ]
 
     CSS = """
     #chat-log {
@@ -116,7 +120,11 @@ class AgentApp(App):
         log.write("")
         log.write(Text.assemble(("You: ", "bold green"), (text, "white")))
         self._messages.append({"role": "user", "content": text})
+        self._safe_msg_count = len(self._messages)
         self._run_agent()
+
+    def action_interrupt(self) -> None:
+        self.workers.cancel_all()
 
     @work(exclusive=True)
     async def _run_agent(self) -> None:
@@ -186,6 +194,11 @@ class AgentApp(App):
 
         try:
             await run_agent(self._messages, on_text, on_tool_start, on_tool_result, on_usage)
+        except asyncio.CancelledError:
+            flush_buffer()
+            del self._messages[self._safe_msg_count:]
+            log.write(Text("[interrupted]", style="dim italic"))
+            log.write("")
         except Exception as e:
             log.write(Text.assemble(("Error: ", "bold red"), (str(e), "white")))
         finally:

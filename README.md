@@ -106,6 +106,7 @@ Type a message and press **Enter** or click **Send**. The agent streams its resp
 | Key | Action |
 |---|---|
 | `Enter` | Send message |
+| `Esc` | Interrupt the running agent. Drops any partial response from the conversation, keeps your last user message, and re-enables input so you can steer or retry. |
 | `Ctrl+X` | Quit |
 
 ### Commands
@@ -175,3 +176,4 @@ app/
 - Tool output is capped at 15 lines in the UI (full output is still sent to the model)
 - No parallel tool execution — tools run sequentially
 - Session file is per-directory — launching the agent from a different cwd starts a fresh conversation
+- `Esc` only takes effect at the next `await` — if the agent is blocked inside a long-running synchronous tool call (e.g. a slow `Bash` command), the interrupt waits until that tool returns
