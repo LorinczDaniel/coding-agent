@@ -281,7 +281,9 @@ class AgentApp(App):
             await flush_buffer()
         except asyncio.CancelledError:
             del self._messages[self._safe_msg_count:]
-            self._current_tool_block = None
+            if self._current_tool_block is not None:
+                self._current_tool_block.remove()
+                self._current_tool_block = None
             self._append_sync(Static(Text("[interrupted]", style="dim italic")))
         except Exception as e:
             await flush_buffer()
