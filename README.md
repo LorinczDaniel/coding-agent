@@ -41,7 +41,7 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
 - **Session persistence** — conversation history is auto-saved to `.agent_session.json` in the working directory after every agent turn, and auto-loaded on startup. Quit and relaunch and the agent picks up where you left off.
 - **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
-- **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, a yellow confirmation modal pops up. Press `y` to approve, `n` (or `Esc`) to deny — denying tells the model "user denied this; do not retry" so it adapts instead of looping.
+- **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, the agent pauses and asks for approval inline in the conversation. Type `y` to approve or `n` to deny in the normal input box — denying tells the model "user denied this; do not retry" so it adapts instead of looping. (`Esc` still interrupts the whole turn.)
 
 ---
 
@@ -188,7 +188,6 @@ app/
   session.py   # save/load/clear the .agent_session.json conversation file
   format.py    # UI-agnostic formatting helpers (usage / cost line)
   permissions.py    # risky-pattern detection, auto-allow config, .agent_config.json loader
-  confirm_modal.py  # Textual ModalScreen for tool-call y/n confirmation
 ```
 
 ---
