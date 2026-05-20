@@ -111,7 +111,7 @@ class ToolBlock(Vertical):
         await self.mount(Static(preview))
         if hidden is not None:
             box = Static(hidden)
-            await self.mount(ToolToggle(hidden_count, box))
-            await self.mount(box)
             box.display = False
+            await self.mount(box)
+            await self.mount(ToolToggle(hidden_count, box))
         await self.mount(Static(_footer(exit_code)))
