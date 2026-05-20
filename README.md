@@ -35,8 +35,13 @@ On startup the agent is told its working directory and a guess at the project ty
   │ total 32
   │ drwxr-xr-x  app/
   │ -rw-r--r--  pyproject.toml
-  └──────────────────────────────────────
+  └─ exit 0 ────────────────────────────
   ```
+- **Rich tool output** —
+  - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions) instead of dumping the whole file; new files render as all-additions
+  - `Read` output is **syntax-highlighted** (lexer guessed from the file extension) with line numbers
+  - `Bash` blocks show the command's **exit code** in the closing line (green for 0, red otherwise)
+  - blocks are still capped at 15 lines in the view with a `... (N more lines)` note (full content goes to the model)
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
 - **Session persistence** — conversation history is auto-saved to `.agent_session.json` in the working directory after every agent turn, and auto-loaded on startup. Quit and relaunch and the agent picks up where you left off.

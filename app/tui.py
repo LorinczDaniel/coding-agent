@@ -7,11 +7,14 @@ from textual.widgets import Header, RichLog, Input, Button, Static
 from textual.containers import Horizontal, Vertical
 from textual import work
 from rich.markup import escape
+from rich.syntax import Syntax
 from rich.text import Text
 from .agent import run_agent
 from .config import load_system_prompt
-from .format import format_usage
+from .format import diff_line_style, format_usage, is_diff, parse_exit_code
 from .session import clear_session, load_session, save_session
+
+_MAX_BLOCK_LINES = 15
 
 
 def _md_to_rich(text: str) -> str:
@@ -29,6 +32,28 @@ def _format_tool_args(args: dict) -> str:
             text = text[:200] + "…"
         parts.append(f"{k}: {text}")
     return "\n".join(parts)
+
+
+def _write_body_lines(log, lines: list[str], style) -> None:
+    for line in lines[:_MAX_BLOCK_LINES]:
+        st = style(line) if callable(style) else style
+        log.write(Text.assemble(("│ ", "dim"), (line, st)))
+    if len(lines) > _MAX_BLOCK_LINES:
+        extra = len(lines) - _MAX_BLOCK_LINES
+        log.write(Text.assemble(("│ ", "dim"), (f"... ({extra} more lines)", "dim")))
+
+
+def _write_footer(log, exit_code: int | None = None) -> None:
+    if exit_code is None:
+        log.write(Text("└" + "─" * 42, style="dim"))
+    else:
+        code_style = "bold green" if exit_code == 0 else "bold red"
+        log.write(Text.assemble(
+            ("└─ ", "dim"),
+            (f"exit {exit_code} ", code_style),
+            ("─" * 32, "dim"),
+        ))
+    log.write("")
 
 
 class AgentApp(App):
@@ -199,16 +224,43 @@ class AgentApp(App):
             log.write(Text.assemble(("┌─ ", "dim"), (name, "bold yellow"), (f" {sep}", "dim")))
             log.write(Text.assemble(("│ ", "dim"), (args_str, "dim white")))
 
-        def on_tool_result(_name: str, result: str) -> None:
+        def on_tool_result(name: str, result: str, args: dict) -> None:
             nonlocal first_text_chunk
             first_text_chunk = True
-            lines = result.strip().splitlines()
-            for line in lines[:15]:
-                log.write(Text.assemble(("│ ", "dim"), (line, "white")))
-            if len(lines) > 15:
-                log.write(Text.assemble(("│ ", "dim"), (f"... ({len(lines) - 15} more lines)", "dim")))
-            log.write(Text("└" + "─" * 42, style="dim"))
-            log.write("")
+
+            if name == "Bash":
+                code, body = parse_exit_code(result)
+                _write_body_lines(log, body.strip().splitlines(), "white")
+                _write_footer(log, exit_code=code)
+                return
+
+            if name in ("Write", "Edit") and is_diff(result):
+                _write_body_lines(log, result.splitlines(), diff_line_style)
+                _write_footer(log)
+                return
+
+            if name == "Read" and not result.startswith("Error"):
+                all_lines = result.splitlines()
+                shown = "\n".join(all_lines[:_MAX_BLOCK_LINES])
+                try:
+                    lexer = Syntax.guess_lexer(args.get("file_path", ""), code=shown)
+                except Exception:
+                    lexer = "text"
+                log.write(Syntax(
+                    shown, lexer,
+                    theme="ansi_dark",
+                    line_numbers=True,
+                    background_color="default",
+                    word_wrap=True,
+                ))
+                if len(all_lines) > _MAX_BLOCK_LINES:
+                    extra = len(all_lines) - _MAX_BLOCK_LINES
+                    log.write(Text.assemble(("│ ", "dim"), (f"... ({extra} more lines)", "dim")))
+                _write_footer(log)
+                return
+
+            _write_body_lines(log, result.strip().splitlines(), "white")
+            _write_footer(log)
 
         def on_usage(prompt: int, completion: int, cost: float) -> None:
             self._total_in += prompt

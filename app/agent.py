@@ -23,7 +23,7 @@ async def run_agent(
     messages: list,
     on_text: Callable[[str], None],
     on_tool_start: Callable[[str, str], None],
-    on_tool_result: Callable[[str, str], None],
+    on_tool_result: Callable[[str, str, dict], None],
     on_usage: Callable[[int, int, float], None] | None = None,
     on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None = None,
 ) -> None:
@@ -122,7 +122,7 @@ async def run_agent(
             else:
                 result = f"Unknown tool: {tc['name']}"
 
-            on_tool_result(tc["name"], result)
+            on_tool_result(tc["name"], result, args)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
