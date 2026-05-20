@@ -73,3 +73,13 @@ def test_is_diff_true_for_unified_diff():
 
 def test_is_diff_false_for_status_message():
     assert is_diff("Wrote foo.py (no changes)") is False
+
+
+# --- format_usage with model ---
+
+def test_format_usage_with_model():
+    assert format_usage(100, 50, 0.01, "haiku") == "session: ↑ 100 · ↓ 50 · $0.0100 · haiku"
+
+
+def test_format_usage_with_model_sonnet():
+    assert format_usage(100, 50, 0.05, "sonnet") == "session: ↑ 100 · ↓ 50 · $0.0500 · sonnet"
