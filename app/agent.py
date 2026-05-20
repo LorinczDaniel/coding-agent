@@ -1,11 +1,17 @@
 import json
 import os
-from typing import Callable
+from typing import Awaitable, Callable
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from .permissions import requires_confirmation
 from .tools import (
     Bash, Edit, Glob, Grep, Read, Write,
     BASH_TOOL, EDIT_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL,
+)
+
+DENIED_RESULT = (
+    "Error: user denied this tool call. "
+    "Do not retry the same call. Try a different approach or ask the user."
 )
 
 load_dotenv()
@@ -19,6 +25,7 @@ async def run_agent(
     on_tool_start: Callable[[str, str], None],
     on_tool_result: Callable[[str, str], None],
     on_usage: Callable[[int, int, float], None] | None = None,
+    on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None = None,
 ) -> None:
     if not API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -87,7 +94,15 @@ async def run_agent(
             args = json.loads(tc["arguments"])
             on_tool_start(tc["name"], tc["arguments"])
 
-            if tc["name"] == "Read":
+            needs_confirm, reason = requires_confirmation(tc["name"], args)
+            if needs_confirm and on_tool_confirm is not None:
+                approved = await on_tool_confirm(tc["name"], args, reason)
+            else:
+                approved = True
+
+            if not approved:
+                result = DENIED_RESULT
+            elif tc["name"] == "Read":
                 result = Read(args["file_path"])
             elif tc["name"] == "Write":
                 result = Write(args["file_path"], args["content"])

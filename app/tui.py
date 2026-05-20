@@ -21,6 +21,16 @@ def _md_to_rich(text: str) -> str:
     return s
 
 
+def _format_tool_args(args: dict) -> str:
+    parts = []
+    for k, v in args.items():
+        text = str(v)
+        if len(text) > 200:
+            text = text[:200] + "…"
+        parts.append(f"{k}: {text}")
+    return "\n".join(parts)
+
+
 class AgentApp(App):
     TITLE = "Agent Daniel"
     BINDINGS = [
@@ -76,6 +86,7 @@ class AgentApp(App):
         self._total_in = 0
         self._total_out = 0
         self._total_cost = 0.0
+        self._pending_confirm: asyncio.Future[bool] | None = None
         log = self.query_one("#chat-log", RichLog)
         saved = load_session()
         if saved is not None:
@@ -107,6 +118,10 @@ class AgentApp(App):
         inp = self.query_one("#user-input", Input)
         inp.value = ""
 
+        if self._pending_confirm is not None and not self._pending_confirm.done():
+            self._answer_confirm(text, log)
+            return
+
         if text == "/clear":
             self._messages = [{"role": "system", "content": load_system_prompt()}]
             clear_session()
@@ -122,6 +137,17 @@ class AgentApp(App):
         self._messages.append({"role": "user", "content": text})
         self._safe_msg_count = len(self._messages)
         self._run_agent()
+
+    def _answer_confirm(self, text: str, log: RichLog) -> None:
+        answer = text.strip().lower()
+        if answer in ("y", "yes"):
+            log.write(Text.assemble(("You: ", "bold green"), ("approved", "white")))
+            self._pending_confirm.set_result(True)
+        elif answer in ("n", "no"):
+            log.write(Text.assemble(("You: ", "bold green"), ("denied", "white")))
+            self._pending_confirm.set_result(False)
+        else:
+            log.write(Text("Please answer y (approve) or n (deny).", style="dim"))
 
     def action_interrupt(self) -> None:
         self.workers.cancel_all()
@@ -192,8 +218,42 @@ class AgentApp(App):
                 format_usage(self._total_in, self._total_out, self._total_cost)
             )
 
+        async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
+            flush_buffer()
+            log.write(Text.assemble(
+                ("⚠ Approve ", "bold yellow"),
+                (name, "bold yellow"),
+                (f"? ({reason})", "yellow"),
+            ))
+            for line in _format_tool_args(args).splitlines():
+                log.write(Text.assemble(("│ ", "dim"), (line, "dim white")))
+            log.write(Text("Type y to approve, n to deny.", style="dim italic"))
+
+            self._pending_confirm = asyncio.get_running_loop().create_future()
+            inp = self.query_one("#user-input", Input)
+            send_btn = self.query_one("#send-btn", Button)
+            inp.disabled = False
+            send_btn.disabled = False
+            inp.placeholder = "Approve? (y / n)"
+            inp.focus()
+            try:
+                return await self._pending_confirm
+            finally:
+                self._pending_confirm = None
+                inp.placeholder = "Type a message..."
+                inp.disabled = True
+                send_btn.disabled = True
+                log.write("")
+
         try:
-            await run_agent(self._messages, on_text, on_tool_start, on_tool_result, on_usage)
+            await run_agent(
+                self._messages,
+                on_text,
+                on_tool_start,
+                on_tool_result,
+                on_usage,
+                on_tool_confirm,
+            )
         except asyncio.CancelledError:
             flush_buffer()
             del self._messages[self._safe_msg_count:]
