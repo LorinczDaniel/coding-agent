@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual import work
 from rich.markup import escape
 from rich.text import Text
-from .agent import run_agent
+from .agent import run_agent, MODELS, DEFAULT_MODEL
 from .config import load_system_prompt
 from .format import format_usage
 from .session import clear_session, load_session, save_session
@@ -92,7 +92,7 @@ class AgentApp(App):
         yield Header()
         yield VerticalScroll(id="chat-log")
         with Vertical(id="bottom-bar"):
-            yield Static(format_usage(0, 0, 0.0), id="usage-bar")
+            yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL), id="usage-bar")
             yield Horizontal(
                 Input(placeholder="Type a message...", id="user-input"),
                 Button("Send", id="send-btn", variant="success"),
@@ -106,6 +106,7 @@ class AgentApp(App):
         self._total_cost = 0.0
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._current_tool_block: ToolBlock | None = None
+        self._model = DEFAULT_MODEL
         saved = load_session()
         if saved is not None:
             self._messages: list = saved
@@ -158,6 +159,34 @@ class AgentApp(App):
             self._current_tool_block = None
             self._container().remove_children()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
+            return
+
+        if text == "/model" or text.startswith("/model "):
+            arg = text[7:].strip()
+            if not arg:
+                options = ", ".join(MODELS)
+                self._append_sync(Static(Text.assemble(
+                    ("Current model: ", "dim"),
+                    (self._model, "bold"),
+                    (" — available: ", "dim"),
+                    (options, "bold"),
+                )))
+            elif arg in MODELS:
+                self._model = arg
+                self._append_sync(Static(Text.assemble(
+                    ("Switched to ", "dim"),
+                    (arg, "bold"),
+                )))
+                self.query_one("#usage-bar", Static).update(
+                    format_usage(self._total_in, self._total_out, self._total_cost, self._model)
+                )
+            else:
+                options = ", ".join(MODELS)
+                self._append_sync(Static(Text.assemble(
+                    (f"Unknown model: {arg}", "bold red"),
+                    (" — available: ", "dim"),
+                    (options, "bold"),
+                )))
             return
 
         inp.disabled = True
@@ -240,7 +269,7 @@ class AgentApp(App):
             self._total_out += completion
             self._total_cost += cost
             self.query_one("#usage-bar", Static).update(
-                format_usage(self._total_in, self._total_out, self._total_cost)
+                format_usage(self._total_in, self._total_out, self._total_cost, self._model)
             )
 
         async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
@@ -272,6 +301,7 @@ class AgentApp(App):
         try:
             await run_agent(
                 self._messages,
+                MODELS[self._model],
                 on_text,
                 on_tool_start,
                 on_tool_result,
