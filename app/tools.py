@@ -1,9 +1,24 @@
+import difflib
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 _SKIP_DIRS = {".git", ".venv"}
+
+
+def _make_diff(old: str, new: str, path: str, max_lines: int = 300) -> str:
+    lines = list(difflib.unified_diff(
+        old.splitlines(),
+        new.splitlines(),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm="",
+    ))
+    if len(lines) > max_lines:
+        extra = len(lines) - max_lines
+        lines = lines[:max_lines] + [f"... (diff truncated, {extra} more lines)"]
+    return "\n".join(lines)
 
 
 READ_TOOL = {
@@ -123,14 +138,20 @@ def Read(file_path: str) -> str:
 
 
 def Write(file_path: str, content: str) -> str:
+    path = Path(file_path)
     try:
-        with open(file_path, "w") as f:
-            f.write(content)
-        return f"Successfully wrote to {file_path}"
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError:
+        old = ""
+    try:
+        path.write_text(content, encoding="utf-8")
     except Exception as e:
         error_msg = f"Error writing to file: {e}"
         print(error_msg, file=sys.stderr)
         return error_msg
+    if old == content:
+        return f"Wrote {file_path} (no changes)"
+    return _make_diff(old, content, file_path)
 
 
 def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
@@ -161,8 +182,7 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         path.write_text(new_content, encoding="utf-8")
     except OSError as e:
         return f"Error writing file: {e}"
-    suffix = f" ({count} replacements)" if count > 1 else ""
-    return f"Edited {file_path}{suffix}"
+    return _make_diff(content, new_content, file_path)
 
 
 def Bash(command: str) -> str:
@@ -170,7 +190,7 @@ def Bash(command: str) -> str:
     output = result.stdout
     if result.stderr:
         output += result.stderr
-    return output
+    return f"[exit {result.returncode}]\n{output}"
 
 
 def Glob(pattern: str, path: str = ".") -> str:

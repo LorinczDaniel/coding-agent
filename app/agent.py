@@ -21,9 +21,9 @@ BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
 async def run_agent(
     messages: list,
-    on_text: Callable[[str], None],
-    on_tool_start: Callable[[str, str], None],
-    on_tool_result: Callable[[str, str], None],
+    on_text: Callable[[str], Awaitable[None]],
+    on_tool_start: Callable[[str, str], Awaitable[None]],
+    on_tool_result: Callable[[str, str, dict], Awaitable[None]],
     on_usage: Callable[[int, int, float], None] | None = None,
     on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None = None,
 ) -> None:
@@ -54,7 +54,7 @@ async def run_agent(
             delta = chunk.choices[0].delta
 
             if delta.content:
-                on_text(delta.content)
+                await on_text(delta.content)
                 text_chunks.append(delta.content)
 
             if delta.tool_calls:
@@ -92,7 +92,7 @@ async def run_agent(
 
         for tc in tool_calls_acc.values():
             args = json.loads(tc["arguments"])
-            on_tool_start(tc["name"], tc["arguments"])
+            await on_tool_start(tc["name"], tc["arguments"])
 
             needs_confirm, reason = requires_confirmation(tc["name"], args)
             if needs_confirm and on_tool_confirm is not None:
@@ -122,7 +122,7 @@ async def run_agent(
             else:
                 result = f"Unknown tool: {tc['name']}"
 
-            on_tool_result(tc["name"], result)
+            await on_tool_result(tc["name"], result, args)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],

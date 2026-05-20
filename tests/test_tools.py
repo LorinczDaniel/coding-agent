@@ -1,4 +1,4 @@
-from app.tools import Edit, Glob, Grep
+from app.tools import Bash, Edit, Glob, Grep, Write
 
 
 # --- Glob ---
@@ -112,7 +112,8 @@ def test_edit_unique_match(tmp_path):
     f = tmp_path / "a.py"
     f.write_text("x = 1\ny = 2\n")
     result = Edit(str(f), "x = 1", "x = 42")
-    assert result.startswith("Edited")
+    assert "-x = 1" in result
+    assert "+x = 42" in result
     assert f.read_text() == "x = 42\ny = 2\n"
 
 
@@ -120,7 +121,8 @@ def test_edit_preserves_indentation(tmp_path):
     f = tmp_path / "a.py"
     f.write_text("def f():\n    return 1\n")
     result = Edit(str(f), "    return 1", "    return 2")
-    assert result.startswith("Edited")
+    assert "-    return 1" in result
+    assert "+    return 2" in result
     assert f.read_text() == "def f():\n    return 2\n"
 
 
@@ -146,8 +148,7 @@ def test_edit_replace_all(tmp_path):
     f = tmp_path / "a.py"
     f.write_text("x\nx\nx\n")
     result = Edit(str(f), "x", "y", replace_all=True)
-    assert result.startswith("Edited")
-    assert "3 replacements" in result
+    assert result.startswith("--- a/")
     assert f.read_text() == "y\ny\ny\n"
 
 
@@ -171,3 +172,48 @@ def test_edit_missing_file(tmp_path):
     result = Edit(str(tmp_path / "nope.py"), "a", "b")
     assert result.startswith("Error:")
     assert "not found" in result
+
+
+# --- Write ---
+
+def test_write_new_file_shows_additions(tmp_path):
+    f = tmp_path / "new.py"
+    result = Write(str(f), "line1\nline2\n")
+    assert result.startswith("--- a/")
+    assert "+line1" in result
+    assert "+line2" in result
+    assert f.read_text() == "line1\nline2\n"
+
+
+def test_write_existing_file_shows_diff(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\ny = 2\n")
+    result = Write(str(f), "x = 1\ny = 3\n")
+    assert "-y = 2" in result
+    assert "+y = 3" in result
+    assert "x = 1" in result  # unchanged context line present
+
+
+def test_write_no_change_reports_no_change(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("same\n")
+    result = Write(str(f), "same\n")
+    assert "no changes" in result
+
+
+# --- Bash ---
+
+def test_bash_success_exit_zero():
+    result = Bash("exit 0")
+    assert result.startswith("[exit 0]")
+
+
+def test_bash_nonzero_exit_captured():
+    result = Bash("exit 3")
+    assert result.startswith("[exit 3]")
+
+
+def test_bash_stdout_after_exit_marker():
+    result = Bash("echo hello")
+    assert result.startswith("[exit 0]")
+    assert "hello" in result
