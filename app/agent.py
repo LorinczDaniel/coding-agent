@@ -18,9 +18,16 @@ load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
+MODELS = {
+    "haiku": "anthropic/claude-haiku-4.5",
+    "sonnet": "anthropic/claude-sonnet-4-6",
+}
+DEFAULT_MODEL = "haiku"
+
 
 async def run_agent(
     messages: list,
+    model: str,
     on_text: Callable[[str], Awaitable[None]],
     on_tool_start: Callable[[str, str], Awaitable[None]],
     on_tool_result: Callable[[str, str, dict], Awaitable[None]],
@@ -38,7 +45,7 @@ async def run_agent(
         usage_obj = None
 
         stream = await client.chat.completions.create(
-            model="anthropic/claude-haiku-4.5",
+            model=model,
             messages=messages,
             tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL],
             stream=True,
