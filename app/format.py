@@ -3,8 +3,9 @@ import re
 _EXIT_RE = re.compile(r"\[exit (-?\d+)\]\n?")
 
 
-def format_usage(prompt: int, completion: int, cost: float) -> str:
-    return f"session: ↑ {prompt:,} · ↓ {completion:,} · ${cost:.4f}"
+def format_usage(prompt: int, completion: int, cost: float, model: str = "") -> str:
+    base = f"session: ↑ {prompt:,} · ↓ {completion:,} · ${cost:.4f}"
+    return f"{base} · {model}" if model else base
 
 
 def parse_exit_code(result: str) -> tuple[int | None, str]:
