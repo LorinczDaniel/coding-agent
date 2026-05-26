@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import Awaitable, Callable
@@ -97,6 +98,8 @@ async def run_agent(
         if not tool_calls_acc:
             break
 
+        # Phase 1: notify UI and handle confirmations sequentially
+        prepared: list[tuple[dict, dict, bool]] = []
         for tc in tool_calls_acc.values():
             args = json.loads(tc["arguments"])
             await on_tool_start(tc["name"], tc["arguments"])
@@ -106,29 +109,36 @@ async def run_agent(
                 approved = await on_tool_confirm(tc["name"], args, reason)
             else:
                 approved = True
+            prepared.append((tc, args, approved))
 
+        # Phase 2: execute approved tools in parallel
+        async def _exec(tc: dict, args: dict, approved: bool) -> str:
             if not approved:
-                result = DENIED_RESULT
-            elif tc["name"] == "Read":
-                result = Read(args["file_path"])
-            elif tc["name"] == "Write":
-                result = Write(args["file_path"], args["content"])
-            elif tc["name"] == "Edit":
-                result = Edit(
-                    args["file_path"],
-                    args["old_string"],
-                    args["new_string"],
-                    args.get("replace_all", False),
+                return DENIED_RESULT
+            name = tc["name"]
+            if name == "Read":
+                return await asyncio.to_thread(Read, args["file_path"])
+            if name == "Write":
+                return await asyncio.to_thread(Write, args["file_path"], args["content"])
+            if name == "Edit":
+                return await asyncio.to_thread(
+                    Edit, args["file_path"], args["old_string"],
+                    args["new_string"], args.get("replace_all", False),
                 )
-            elif tc["name"] == "Bash":
-                result = Bash(args["command"])
-            elif tc["name"] == "Glob":
-                result = Glob(args["pattern"], args.get("path", "."))
-            elif tc["name"] == "Grep":
-                result = Grep(args["pattern"], args.get("path", "."), args.get("include", "*"))
-            else:
-                result = f"Unknown tool: {tc['name']}"
+            if name == "Bash":
+                return await asyncio.to_thread(Bash, args["command"])
+            if name == "Glob":
+                return await asyncio.to_thread(Glob, args["pattern"], args.get("path", "."))
+            if name == "Grep":
+                return await asyncio.to_thread(
+                    Grep, args["pattern"], args.get("path", "."), args.get("include", "*"),
+                )
+            return f"Unknown tool: {name}"
 
+        results = await asyncio.gather(*(_exec(tc, args, ok) for tc, args, ok in prepared))
+
+        # Phase 3: report results and append messages (order preserved by gather)
+        for (tc, args, _), result in zip(prepared, results):
             await on_tool_result(tc["name"], result, args)
             messages.append({
                 "role": "tool",
