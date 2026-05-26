@@ -175,6 +175,13 @@ class AgentApp(App):
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
             return
 
+        if text == "/todo-clear":
+            panel = self.query_one("#todo-panel", TodoPanel)
+            panel.todos = []
+            panel.display = False
+            self._append_sync(Static(Text("Todo list cleared.", style="dim")))
+            return
+
         if text == "/model" or text.startswith("/model "):
             arg = text[7:].strip()
             if not arg:
