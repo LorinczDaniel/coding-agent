@@ -2,6 +2,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.reactive import reactive
 from textual.widgets import Static
 
 from .format import diff_line_style, is_diff, parse_exit_code
@@ -115,3 +116,26 @@ class ToolBlock(Vertical):
             await self.mount(box)
             await self.mount(ToolToggle(hidden_count, box))
         await self.mount(Static(_footer(exit_code)))
+
+
+_STATUS_ICONS = {
+    "not-started": ("○", "dim"),
+    "in-progress": ("●", "bold yellow"),
+    "completed": ("✓", "bold green"),
+}
+
+
+class TodoPanel(Static):
+    """Side panel that renders the agent's todo list and updates live."""
+
+    todos: reactive[list[dict]] = reactive(list, always_update=True)
+
+    def render(self) -> Text:
+        if not self.todos:
+            return Text("No tasks", style="dim italic")
+        lines: list[Text] = []
+        for item in self.todos:
+            icon, style = _STATUS_ICONS.get(item.get("status", ""), ("?", "red"))
+            title_style = "dim strike" if item.get("status") == "completed" else "white"
+            lines.append(Text.assemble((f" {icon} ", style), (item.get("title", ""), title_style)))
+        return Text("\n").join(lines)

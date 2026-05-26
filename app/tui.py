@@ -12,7 +12,7 @@ from .agent import run_agent, MODELS, DEFAULT_MODEL
 from .config import load_system_prompt
 from .format import format_usage
 from .session import clear_session, load_session, save_session
-from .widgets import ToolBlock, build_tool_body
+from .widgets import ToolBlock, TodoPanel, build_tool_body
 
 
 def _md_to_rich(text: str) -> str:
@@ -62,6 +62,18 @@ class AgentApp(App):
         background: $boost;
     }
 
+    #main-area {
+        height: 1fr;
+    }
+
+    #todo-panel {
+        width: 30;
+        dock: right;
+        padding: 1;
+        border-left: solid $accent;
+        display: none;
+    }
+
     #bottom-bar {
         height: 4;
         dock: bottom;
@@ -90,7 +102,9 @@ class AgentApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield VerticalScroll(id="chat-log")
+        with Horizontal(id="main-area"):
+            yield VerticalScroll(id="chat-log")
+            yield TodoPanel(id="todo-panel")
         with Vertical(id="bottom-bar"):
             yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL), id="usage-bar")
             yield Horizontal(
@@ -159,6 +173,13 @@ class AgentApp(App):
             self._current_tool_block = None
             self._container().remove_children()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
+            return
+
+        if text == "/todo-clear":
+            panel = self.query_one("#todo-panel", TodoPanel)
+            panel.todos = []
+            panel.display = False
+            self._append_sync(Static(Text("Todo list cleared.", style="dim")))
             return
 
         if text == "/model" or text.startswith("/model "):
@@ -298,6 +319,11 @@ class AgentApp(App):
                 inp.disabled = True
                 send_btn.disabled = True
 
+        async def on_todo(todos: list[dict]) -> None:
+            panel = self.query_one("#todo-panel", TodoPanel)
+            panel.display = True
+            panel.todos = todos
+
         try:
             await run_agent(
                 self._messages,
@@ -307,6 +333,7 @@ class AgentApp(App):
                 on_tool_result,
                 on_usage,
                 on_tool_confirm,
+                on_todo,
             )
             await flush_buffer()
         except asyncio.CancelledError:
