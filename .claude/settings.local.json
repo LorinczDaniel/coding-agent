@@ -10,7 +10,14 @@
       "Bash(python -c \"from app.config import load_system_prompt; from app.session import load_session, save_session, clear_session; print\\(load_system_prompt\\(\\)\\)\")",
       "Bash(.venv/Scripts/python -c \"from app.config import load_system_prompt; from app.session import load_session, save_session, clear_session; print\\(load_system_prompt\\(\\)\\)\")",
       "Bash(python *)",
-      "Bash(.venv/bin/python *)"
+      "Bash(.venv/bin/python *)",
+      "Bash(unlink .venv.bak/lib64)",
+      "Bash(unlink .venv.bak/bin/python)",
+      "Bash(unlink .venv.bak/bin/python3)",
+      "Bash(unlink .venv.bak/bin/python3.14)",
+      "Bash(git worktree *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)"
     ]
   }
 }
