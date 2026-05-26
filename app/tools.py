@@ -254,3 +254,61 @@ def Grep(pattern: str, path: str = ".", include: str = "*") -> str:
         return result
     except Exception as e:
         return f"Error: {e}"
+
+
+# --- TodoWrite ---
+
+TODO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "TodoWrite",
+        "description": (
+            "Create or update a todo list to track multi-step plans. "
+            "Pass the COMPLETE list every time — it replaces the previous list. "
+            "Use status 'in-progress' for at most one item at a time."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "todos": {
+                    "type": "array",
+                    "description": "The full todo list. Each item has id, title, and status.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer", "description": "Unique numeric id."},
+                            "title": {"type": "string", "description": "Short task description."},
+                            "status": {
+                                "type": "string",
+                                "enum": ["not-started", "in-progress", "completed"],
+                                "description": "Current status of this item.",
+                            },
+                        },
+                        "required": ["id", "title", "status"],
+                    },
+                },
+            },
+            "required": ["todos"],
+        },
+    },
+}
+
+_VALID_STATUSES = {"not-started", "in-progress", "completed"}
+
+
+def TodoWrite(todos: list[dict]) -> str:
+    if not isinstance(todos, list):
+        return "Error: todos must be a list."
+    for item in todos:
+        if not isinstance(item, dict):
+            return "Error: each todo must be an object with id, title, status."
+        for key in ("id", "title", "status"):
+            if key not in item:
+                return f"Error: todo item missing required field: {key}"
+        if item["status"] not in _VALID_STATUSES:
+            return f"Error: invalid status '{item['status']}'. Must be one of: {', '.join(sorted(_VALID_STATUSES))}"
+    lines = []
+    for item in todos:
+        icon = {"not-started": "○", "in-progress": "●", "completed": "✓"}[item["status"]]
+        lines.append(f"{icon} {item['title']}")
+    return "Todo list updated:\n" + "\n".join(lines)

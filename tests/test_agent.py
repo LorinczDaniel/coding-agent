@@ -73,6 +73,7 @@ def callbacks():
         "on_tool_result": AsyncMock(),
         "on_usage": None,
         "on_tool_confirm": None,
+        "on_todo": AsyncMock(),
     }
 
 
@@ -229,3 +230,50 @@ async def test_mixed_approved_and_denied(tmp_path, callbacks):
     assert tool_msgs[2]["content"] == "c2"
     # tool_call_ids still in order
     assert [m["tool_call_id"] for m in tool_msgs] == ["call_0", "call_1", "call_2"]
+
+
+@pytest.mark.asyncio
+async def test_todo_write_calls_on_todo(callbacks):
+    """TodoWrite tool triggers the on_todo callback with the todo list."""
+    todos = [
+        {"id": 1, "title": "Step one", "status": "in-progress"},
+        {"id": 2, "title": "Step two", "status": "not-started"},
+    ]
+
+    # Turn 1: model calls TodoWrite
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_todo", name="TodoWrite",
+                             arguments=json.dumps({"todos": todos})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    # Turn 2: model replies with text
+    text_chunks = [
+        _make_chunk(delta_content="Plan created"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "plan a task"}]
+
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # on_todo should have been called with the todos list
+    callbacks["on_todo"].assert_awaited_once_with(todos)
+
+    # Tool result message should confirm the update
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert "Todo list updated" in tool_msgs[0]["content"]
+    assert "● Step one" in tool_msgs[0]["content"]
+    assert "○ Step two" in tool_msgs[0]["content"]

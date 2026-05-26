@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from .permissions import requires_confirmation
 from .tools import (
-    Bash, Edit, Glob, Grep, Read, Write,
-    BASH_TOOL, EDIT_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL,
+    Bash, Edit, Glob, Grep, Read, Write, TodoWrite,
+    BASH_TOOL, EDIT_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL, TODO_TOOL,
 )
 
 DENIED_RESULT = (
@@ -34,6 +34,7 @@ async def run_agent(
     on_tool_result: Callable[[str, str, dict], Awaitable[None]],
     on_usage: Callable[[int, int, float], None] | None = None,
     on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None = None,
+    on_todo: Callable[[list[dict]], Awaitable[None]] | None = None,
 ) -> None:
     if not API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -48,7 +49,7 @@ async def run_agent(
         stream = await client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL],
+            tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL, TODO_TOOL],
             stream=True,
             stream_options={"include_usage": True},
             extra_body={"usage": {"include": True}},
@@ -133,6 +134,11 @@ async def run_agent(
                 return await asyncio.to_thread(
                     Grep, args["pattern"], args.get("path", "."), args.get("include", "*"),
                 )
+            if name == "TodoWrite":
+                result = TodoWrite(args["todos"])
+                if on_todo is not None and not result.startswith("Error"):
+                    await on_todo(args["todos"])
+                return result
             return f"Unknown tool: {name}"
 
         results = await asyncio.gather(*(_exec(tc, args, ok) for tc, args, ok in prepared))

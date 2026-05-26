@@ -1,4 +1,4 @@
-from app.tools import Bash, Edit, Glob, Grep, Write
+from app.tools import Bash, Edit, Glob, Grep, Write, TodoWrite
 
 
 # --- Glob ---
@@ -217,3 +217,43 @@ def test_bash_stdout_after_exit_marker():
     result = Bash("echo hello")
     assert result.startswith("[exit 0]")
     assert "hello" in result
+
+
+# --- TodoWrite ---
+
+def test_todo_write_valid_list():
+    todos = [
+        {"id": 1, "title": "First task", "status": "completed"},
+        {"id": 2, "title": "Second task", "status": "in-progress"},
+        {"id": 3, "title": "Third task", "status": "not-started"},
+    ]
+    result = TodoWrite(todos)
+    assert "Todo list updated" in result
+    assert "✓ First task" in result
+    assert "● Second task" in result
+    assert "○ Third task" in result
+
+
+def test_todo_write_empty_list():
+    result = TodoWrite([])
+    assert "Todo list updated" in result
+
+
+def test_todo_write_invalid_not_list():
+    result = TodoWrite("oops")
+    assert result.startswith("Error")
+
+
+def test_todo_write_missing_field():
+    result = TodoWrite([{"id": 1, "title": "x"}])
+    assert "missing required field: status" in result
+
+
+def test_todo_write_invalid_status():
+    result = TodoWrite([{"id": 1, "title": "x", "status": "done"}])
+    assert "invalid status" in result
+
+
+def test_todo_write_invalid_item_type():
+    result = TodoWrite(["not a dict"])
+    assert result.startswith("Error")
