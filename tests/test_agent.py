@@ -1,0 +1,231 @@
+import asyncio
+import json
+import time
+from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
+
+from app.agent import run_agent, DENIED_RESULT
+
+
+def _make_chunk(delta_content=None, delta_tool_calls=None, usage=None, has_choices=True):
+    """Build a fake streaming chunk."""
+    chunk = MagicMock()
+    chunk.usage = usage
+    if not has_choices:
+        chunk.choices = []
+        return chunk
+    delta = MagicMock()
+    delta.content = delta_content
+    delta.tool_calls = delta_tool_calls
+    choice = MagicMock()
+    choice.delta = delta
+    chunk.choices = [choice]
+    return chunk
+
+
+def _tool_call_delta(index, tc_id=None, name=None, arguments=""):
+    """Build a fake tool-call delta fragment."""
+    tc = MagicMock()
+    tc.index = index
+    tc.id = tc_id
+    func = MagicMock()
+    func.name = name
+    func.arguments = arguments
+    tc.function = func
+    return tc
+
+
+def _make_stream(chunks):
+    """Wrap a list of chunks into an async iterator."""
+    async def _iter():
+        for c in chunks:
+            yield c
+    return _iter()
+
+
+def _read_stream(file_paths):
+    """Build stream chunks that emit multiple Read tool calls, then a final text-only turn."""
+    tool_deltas = []
+    for i, fp in enumerate(file_paths):
+        tool_deltas.append(
+            _make_chunk(delta_tool_calls=[
+                _tool_call_delta(i, tc_id=f"call_{i}", name="Read",
+                                 arguments=json.dumps({"file_path": fp})),
+            ])
+        )
+    # Final empty chunk (no choices) for usage
+    tool_deltas.append(_make_chunk(has_choices=False))
+
+    # Second turn: model replies with text, no tools
+    text_chunks = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    return [tool_deltas, text_chunks]
+
+
+@pytest.fixture
+def callbacks():
+    return {
+        "on_text": AsyncMock(),
+        "on_tool_start": AsyncMock(),
+        "on_tool_result": AsyncMock(),
+        "on_usage": None,
+        "on_tool_confirm": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_parallel_reads_preserve_order(tmp_path, callbacks):
+    """Multiple Read calls run in parallel and results line up with tool_call_id."""
+    files = []
+    for i in range(3):
+        f = tmp_path / f"file_{i}.txt"
+        f.write_text(f"content_{i}")
+        files.append(str(f))
+
+    turns = _read_stream(files)
+    turn_iter = iter(turns)
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turn_iter))
+
+    messages = [{"role": "user", "content": "read these files"}]
+
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # Verify tool results were reported in order
+    assert callbacks["on_tool_result"].call_count == 3
+    for i in range(3):
+        call_args = callbacks["on_tool_result"].call_args_list[i]
+        assert call_args[0][0] == "Read"
+        assert call_args[0][1] == f"content_{i}"
+
+    # Verify tool messages in conversation have correct tool_call_ids
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 3
+    for i, msg in enumerate(tool_msgs):
+        assert msg["tool_call_id"] == f"call_{i}"
+        assert msg["content"] == f"content_{i}"
+
+
+@pytest.mark.asyncio
+async def test_parallel_execution_is_concurrent(tmp_path, callbacks):
+    """Verify tools actually run concurrently (not sequentially)."""
+    files = []
+    for i in range(3):
+        f = tmp_path / f"file_{i}.txt"
+        f.write_text(f"data_{i}")
+        files.append(str(f))
+
+    turns = _read_stream(files)
+    turn_iter = iter(turns)
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turn_iter))
+
+    original_read = __import__("app.tools", fromlist=["Read"]).Read
+
+    def slow_read(file_path):
+        time.sleep(0.15)
+        return original_read(file_path)
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+         patch("app.agent.AsyncOpenAI") as mock_cls, \
+         patch("app.agent.Read", side_effect=slow_read):
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        start = time.monotonic()
+        await run_agent(messages, "test-model", **callbacks)
+        elapsed = time.monotonic() - start
+
+    # 3 x 0.15s sequential = 0.45s; parallel should be ~0.15s
+    assert elapsed < 0.35, f"Expected parallel execution, took {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_returns_denied_result(tmp_path, callbacks):
+    """When user denies a tool, DENIED_RESULT is used without executing the tool."""
+    f = tmp_path / "secret.txt"
+    f.write_text("secret")
+
+    turns = _read_stream([str(f)])
+    turn_iter = iter(turns)
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turn_iter))
+
+    async def deny_all(name, args, reason):
+        return False
+
+    callbacks["on_tool_confirm"] = deny_all
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+         patch("app.agent.AsyncOpenAI") as mock_cls, \
+         patch("app.agent.requires_confirmation", return_value=(True, "risky")):
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["content"] == DENIED_RESULT
+
+
+@pytest.mark.asyncio
+async def test_mixed_approved_and_denied(tmp_path, callbacks):
+    """Mix of approved and denied tools: ordering preserved, denied get DENIED_RESULT."""
+    files = []
+    for i in range(3):
+        f = tmp_path / f"f{i}.txt"
+        f.write_text(f"c{i}")
+        files.append(str(f))
+
+    turns = _read_stream(files)
+    turn_iter = iter(turns)
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turn_iter))
+
+    call_count = 0
+
+    async def deny_second(name, args, reason):
+        nonlocal call_count
+        call_count += 1
+        return call_count != 2  # deny the second tool call
+
+    callbacks["on_tool_confirm"] = deny_second
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+         patch("app.agent.AsyncOpenAI") as mock_cls, \
+         patch("app.agent.requires_confirmation", return_value=(True, "test")):
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 3
+    assert tool_msgs[0]["content"] == "c0"
+    assert tool_msgs[1]["content"] == DENIED_RESULT
+    assert tool_msgs[2]["content"] == "c2"
+    # tool_call_ids still in order
+    assert [m["tool_call_id"] for m in tool_msgs] == ["call_0", "call_1", "call_2"]
