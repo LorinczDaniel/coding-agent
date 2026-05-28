@@ -3,7 +3,7 @@ import json
 import re
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Header, Input, Button, Static
+from textual.widgets import Header, Input, Static
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual import work
 from rich.markup import escape
@@ -11,7 +11,10 @@ from rich.text import Text
 from .agent import run_agent, MODELS, DEFAULT_MODEL
 from .config import load_system_prompt
 from .format import format_usage
-from .session import clear_session, load_session, save_session
+from .session import (
+    clear_session, load_session, save_session, list_sessions,
+    DEFAULT_SESSION, _validate_name,
+)
 from .widgets import ToolBlock, TodoPanel, build_tool_body
 
 
@@ -94,10 +97,6 @@ class AgentApp(App):
     #user-input {
         width: 1fr;
     }
-
-    #send-btn {
-        width: 8;
-    }
     """
 
     def compose(self) -> ComposeResult:
@@ -109,7 +108,6 @@ class AgentApp(App):
             yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL), id="usage-bar")
             yield Horizontal(
                 Input(placeholder="Type a message...", id="user-input"),
-                Button("Send", id="send-btn", variant="success"),
                 id="input-bar",
             )
 
@@ -121,13 +119,15 @@ class AgentApp(App):
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._current_tool_block: ToolBlock | None = None
         self._model = DEFAULT_MODEL
-        saved = load_session()
+        self._session_name = DEFAULT_SESSION
+        saved = load_session(self._session_name)
         if saved is not None:
             self._messages: list = saved
             user_turns = sum(1 for m in saved if m.get("role") == "user")
             self._append_sync(Static(Text.assemble(
-                ("Loaded previous session ", "dim"),
-                (f"({user_turns} user turn{'s' if user_turns != 1 else ''}). ", "dim"),
+                ("Loaded session ", "dim"),
+                (self._session_name, "bold"),
+                (f" ({user_turns} user turn{'s' if user_turns != 1 else ''}). ", "dim"),
                 ("Type ", "dim"),
                 ("/clear", "bold yellow"),
                 (" to start fresh.", "dim"),
@@ -152,10 +152,6 @@ class AgentApp(App):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self._send(event.value)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "send-btn":
-            self._send(self.query_one("#user-input", Input).value)
-
     def _send(self, text: str) -> None:
         text = text.strip()
         if not text:
@@ -169,7 +165,7 @@ class AgentApp(App):
 
         if text == "/clear":
             self._messages = [{"role": "system", "content": load_system_prompt()}]
-            clear_session()
+            clear_session(self._session_name)
             self._current_tool_block = None
             self._container().remove_children()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
@@ -180,6 +176,10 @@ class AgentApp(App):
             panel.todos = []
             panel.display = False
             self._append_sync(Static(Text("Todo list cleared.", style="dim")))
+            return
+
+        if text.startswith("/sessions"):
+            self._handle_sessions_command(text)
             return
 
         if text == "/model" or text.startswith("/model "):
@@ -211,7 +211,6 @@ class AgentApp(App):
             return
 
         inp.disabled = True
-        self.query_one("#send-btn", Button).disabled = True
         self._append_sync(Static(Text.assemble(("You: ", "bold green"), (text, "white"))))
         self._messages.append({"role": "user", "content": text})
         self._safe_msg_count = len(self._messages)
@@ -227,6 +226,67 @@ class AgentApp(App):
             self._pending_confirm.set_result(False)
         else:
             self._append_sync(Static(Text("Please answer y (approve) or n (deny).", style="dim")))
+
+    def _handle_sessions_command(self, text: str) -> None:
+        parts = text.split()
+        sub = parts[1] if len(parts) > 1 else ""
+        arg = parts[2] if len(parts) > 2 else ""
+
+        if sub == "list" or not sub:
+            names = list_sessions()
+            if not names:
+                self._append_sync(Static(Text("No saved sessions.", style="dim")))
+            else:
+                for n in names:
+                    marker = " ← current" if n == self._session_name else ""
+                    style = "bold" if n == self._session_name else "dim"
+                    self._append_sync(Static(Text(f"  {n}{marker}", style=style)))
+            return
+
+        if sub == "new":
+            if not arg:
+                self._append_sync(Static(Text("Usage: /sessions new <name>", style="dim")))
+                return
+            err = _validate_name(arg)
+            if err:
+                self._append_sync(Static(Text(err, style="bold red")))
+                return
+            if load_session(arg) is not None:
+                self._append_sync(Static(Text(f"Session '{arg}' already exists. Use /sessions load {arg}.", style="bold red")))
+                return
+            save_session(self._messages, self._session_name)
+            self._session_name = arg
+            self._messages = [{"role": "system", "content": load_system_prompt()}]
+            self._current_tool_block = None
+            self._container().remove_children()
+            self._append_sync(Static(Text.assemble(
+                ("Created and switched to session ", "dim"),
+                (arg, "bold"),
+            )))
+            return
+
+        if sub == "load":
+            if not arg:
+                self._append_sync(Static(Text("Usage: /sessions load <name>", style="dim")))
+                return
+            saved = load_session(arg)
+            if saved is None:
+                self._append_sync(Static(Text(f"Session '{arg}' not found.", style="bold red")))
+                return
+            save_session(self._messages, self._session_name)
+            self._session_name = arg
+            self._messages = saved
+            self._current_tool_block = None
+            self._container().remove_children()
+            user_turns = sum(1 for m in saved if m.get("role") == "user")
+            self._append_sync(Static(Text.assemble(
+                ("Loaded session ", "dim"),
+                (arg, "bold"),
+                (f" ({user_turns} user turn{'s' if user_turns != 1 else ''}).", "dim"),
+            )))
+            return
+
+        self._append_sync(Static(Text("Usage: /sessions [list | new <name> | load <name>]", style="dim")))
 
     def action_interrupt(self) -> None:
         self.workers.cancel_all()
@@ -306,9 +366,7 @@ class AgentApp(App):
 
             self._pending_confirm = asyncio.get_running_loop().create_future()
             inp = self.query_one("#user-input", Input)
-            send_btn = self.query_one("#send-btn", Button)
             inp.disabled = False
-            send_btn.disabled = False
             inp.placeholder = "Approve? (y / n)"
             inp.focus()
             try:
@@ -317,7 +375,6 @@ class AgentApp(App):
                 self._pending_confirm = None
                 inp.placeholder = "Type a message..."
                 inp.disabled = True
-                send_btn.disabled = True
 
         async def on_todo(todos: list[dict]) -> None:
             panel = self.query_one("#todo-panel", TodoPanel)
@@ -346,8 +403,7 @@ class AgentApp(App):
             await flush_buffer()
             self._append_sync(Static(Text.assemble(("Error: ", "bold red"), (str(e), "white"))))
         finally:
-            save_session(self._messages)
+            save_session(self._messages, self._session_name)
             inp = self.query_one("#user-input", Input)
             inp.disabled = False
-            self.query_one("#send-btn", Button).disabled = False
             inp.focus()
