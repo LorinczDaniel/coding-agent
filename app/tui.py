@@ -30,7 +30,7 @@ def _format_tool_args(args: dict) -> str:
     for k, v in args.items():
         text = str(v)
         if len(text) > 200:
-            text = text[:200] + "…"
+            text = text[:200] + "\u2026"
         parts.append(f"{k}: {text}")
     return "\n".join(parts)
 
@@ -163,6 +163,19 @@ class AgentApp(App):
             self._answer_confirm(text)
             return
 
+        if text == "/help":
+            for line in [
+                "/help                          Show this help message",
+                "/clear                         Clear current conversation",
+                "/model [name]                  Show or switch the active model",
+                "/sessions [list|new|load|delete]  Manage named sessions",
+                "/todo-clear                    Clear the todo panel",
+                "",
+                "Ctrl+X to quit, Escape to interrupt the agent.",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
         if text == "/clear":
             self._messages = [{"role": "system", "content": load_system_prompt()}]
             clear_session(self._session_name)
@@ -184,12 +197,19 @@ class AgentApp(App):
 
         if text == "/model" or text.startswith("/model "):
             arg = text[7:].strip()
+            if arg == "help":
+                for line in [
+                    "/model               Show current model and available options",
+                    "/model <name>        Switch to a different model",
+                ]:
+                    self._append_sync(Static(Text(f"  {line}", style="dim")))
+                return
             if not arg:
                 options = ", ".join(MODELS)
                 self._append_sync(Static(Text.assemble(
                     ("Current model: ", "dim"),
                     (self._model, "bold"),
-                    (" — available: ", "dim"),
+                    (" \u2014 available: ", "dim"),
                     (options, "bold"),
                 )))
             elif arg in MODELS:
@@ -205,7 +225,7 @@ class AgentApp(App):
                 options = ", ".join(MODELS)
                 self._append_sync(Static(Text.assemble(
                     (f"Unknown model: {arg}", "bold red"),
-                    (" — available: ", "dim"),
+                    (" \u2014 available: ", "dim"),
                     (options, "bold"),
                 )))
             return
@@ -232,13 +252,24 @@ class AgentApp(App):
         sub = parts[1] if len(parts) > 1 else ""
         arg = parts[2] if len(parts) > 2 else ""
 
+        if sub == "help":
+            for line in [
+                "/sessions              List all sessions (same as /sessions list)",
+                "/sessions list         List all sessions for this directory",
+                "/sessions new <name>   Create and switch to a new session",
+                "/sessions load <name>  Switch to an existing session",
+                "/sessions delete <name>  Delete a saved session",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
         if sub == "list" or not sub:
             names = list_sessions()
             if not names:
                 self._append_sync(Static(Text("No saved sessions.", style="dim")))
             else:
                 for n in names:
-                    marker = " ← current" if n == self._session_name else ""
+                    marker = " \u2190 current" if n == self._session_name else ""
                     style = "bold" if n == self._session_name else "dim"
                     self._append_sync(Static(Text(f"  {n}{marker}", style=style)))
             return
@@ -286,7 +317,24 @@ class AgentApp(App):
             )))
             return
 
-        self._append_sync(Static(Text("Usage: /sessions [list | new <name> | load <name>]", style="dim")))
+        if sub == "delete":
+            if not arg:
+                self._append_sync(Static(Text("Usage: /sessions delete <name>", style="dim")))
+                return
+            if arg == self._session_name:
+                self._append_sync(Static(Text("Cannot delete the current session.", style="bold red")))
+                return
+            if load_session(arg) is None:
+                self._append_sync(Static(Text(f"Session '{arg}' not found.", style="bold red")))
+                return
+            clear_session(arg)
+            self._append_sync(Static(Text.assemble(
+                ("Deleted session ", "dim"),
+                (arg, "bold"),
+            )))
+            return
+
+        self._append_sync(Static(Text("Unknown subcommand. Type /sessions help for usage.", style="dim")))
 
     def action_interrupt(self) -> None:
         self.workers.cancel_all()
@@ -356,12 +404,12 @@ class AgentApp(App):
         async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
             await flush_buffer()
             await self._append(Static(Text.assemble(
-                ("⚠ Approve ", "bold yellow"),
+                ("\u26a0 Approve ", "bold yellow"),
                 (name, "bold yellow"),
                 (f"? ({reason})", "yellow"),
             )))
             for line in _format_tool_args(args).splitlines():
-                await self._append(Static(Text.assemble(("│ ", "dim"), (line, "dim white"))))
+                await self._append(Static(Text.assemble(("\u2502 ", "dim"), (line, "dim white"))))
             await self._append(Static(Text("Type y to approve, n to deny.", style="dim italic")))
 
             self._pending_confirm = asyncio.get_running_loop().create_future()
