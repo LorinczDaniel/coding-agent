@@ -18,6 +18,7 @@ claude-agent gives you a conversational interface to an AI that can actually act
 | **Bash** | Runs any shell command and returns stdout + stderr |
 | **Glob** | Finds files matching a glob pattern (e.g. `**/*.py`) |
 | **Grep** | Searches file contents with a regex |
+| **TodoWrite** | Tracks multi-step plans with a todo panel |
 
 The agent can chain these freely. Ask it to "refactor this file" and it will read it, figure out the changes, write the result, and confirm — without you doing anything in between.
 
@@ -44,9 +45,28 @@ On startup the agent is told its working directory and a guess at the project ty
   - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest (full content always goes to the model)
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
-- **Session persistence** — conversation history is auto-saved to `.agent_session.json` in the working directory after every agent turn, and auto-loaded on startup. Quit and relaunch and the agent picks up where you left off.
+- **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
 - **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
+- **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
 - **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, the agent pauses and asks for approval inline in the conversation. Type `y` to approve or `n` to deny in the normal input box — denying tells the model "user denied this; do not retry" so it adapts instead of looping. (`Esc` still interrupts the whole turn.)
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `/help` | Show all available commands |
+| `/clear` | Clear the current conversation |
+| `/model` | Show current model and available options |
+| `/model <name>` | Switch to a different model (e.g. `haiku`, `sonnet`) |
+| `/sessions` | List all sessions for this directory |
+| `/sessions new <name>` | Create and switch to a new named session |
+| `/sessions load <name>` | Switch to an existing session |
+| `/sessions delete <name>` | Delete a saved session |
+| `/todo-clear` | Clear the todo panel |
+
+Every command also supports a `help` subcommand (e.g. `/model help`, `/sessions help`).
+
+**Keyboard shortcuts:** `Ctrl+X` to quit, `Escape` to interrupt the agent mid-turn.
 
 ---
 

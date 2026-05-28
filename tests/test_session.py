@@ -100,3 +100,13 @@ def test_save_load_default_name(tmp_path, monkeypatch):
     save_session(msgs)
     assert load_session() == msgs
     assert (tmp_path / "default.json").exists()
+
+
+def test_clear_removes_specific_session(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "a"}], "keep")
+    save_session([{"role": "user", "content": "b"}], "remove")
+    assert list_sessions() == ["keep", "remove"]
+    clear_session("remove")
+    assert list_sessions() == ["keep"]
+    assert load_session("keep") is not None
