@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual import work
 from rich.markup import escape
 from rich.text import Text
-from .agent import run_agent, MODELS, DEFAULT_MODEL
+from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
 from .config import load_system_prompt
 from .format import format_usage
 from .session import (
@@ -105,7 +105,7 @@ class AgentApp(App):
             yield VerticalScroll(id="chat-log")
             yield TodoPanel(id="todo-panel")
         with Vertical(id="bottom-bar"):
-            yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL), id="usage-bar")
+            yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL, CONTEXT_WINDOWS.get(MODELS[DEFAULT_MODEL], 0)), id="usage-bar")
             yield Horizontal(
                 Input(placeholder="Type a message...", id="user-input"),
                 id="input-bar",
@@ -257,7 +257,7 @@ class AgentApp(App):
                     (arg, "bold"),
                 )))
                 self.query_one("#usage-bar", Static).update(
-                    format_usage(self._total_in, self._total_out, self._total_cost, self._model)
+                    format_usage(self._total_in, self._total_out, self._total_cost, self._model, CONTEXT_WINDOWS.get(MODELS[self._model], 0))
                 )
             else:
                 options = ", ".join(MODELS)
@@ -439,9 +439,22 @@ class AgentApp(App):
             self._total_in += prompt
             self._total_out += completion
             self._total_cost += cost
+            ctx_window = CONTEXT_WINDOWS.get(MODELS[self._model], 0)
             self.query_one("#usage-bar", Static).update(
-                format_usage(self._total_in, self._total_out, self._total_cost, self._model)
+                format_usage(self._total_in, self._total_out, self._total_cost, self._model, ctx_window)
             )
+            if ctx_window > 0:
+                ratio = self._total_in / ctx_window
+                if ratio >= 0.9:
+                    self._append_sync(Static(Text(
+                        f"⚠ Context {ratio:.0%} full — start a new session (/sessions new <name>) to avoid silent truncation.",
+                        style="bold red",
+                    )))
+                elif ratio >= 0.75:
+                    self._append_sync(Static(Text(
+                        f"⚠ Context {ratio:.0%} full — consider starting a new session soon.",
+                        style="bold yellow",
+                    )))
 
         async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
             await flush_buffer()
