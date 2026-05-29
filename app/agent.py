@@ -127,7 +127,9 @@ async def run_agent(
                     args["new_string"], args.get("replace_all", False),
                 )
             if name == "Bash":
-                return await asyncio.to_thread(Bash, args["command"])
+                return await asyncio.to_thread(
+                    Bash, args["command"], args.get("timeout", 120),
+                )
             if name == "Glob":
                 return await asyncio.to_thread(Glob, args["pattern"], args.get("path", "."))
             if name == "Grep":
