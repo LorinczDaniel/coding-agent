@@ -86,7 +86,11 @@ BASH_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "The shell command to execute."}
+                "command": {"type": "string", "description": "The shell command to execute."},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max seconds to wait for the command to finish. Default 120.",
+                },
             },
             "required": ["command"],
         },
@@ -185,8 +189,13 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
     return _make_diff(content, new_content, file_path)
 
 
-def Bash(command: str) -> str:
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+def Bash(command: str, timeout: int = 120) -> str:
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"[error] Command timed out after {timeout}s: {command}"
     output = result.stdout
     if result.stderr:
         output += result.stderr
