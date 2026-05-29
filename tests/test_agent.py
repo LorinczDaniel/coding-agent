@@ -94,7 +94,7 @@ async def test_parallel_reads_preserve_order(tmp_path, callbacks):
 
     messages = [{"role": "user", "content": "read these files"}]
 
-    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+    with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = fake_create
@@ -140,7 +140,7 @@ async def test_parallel_execution_is_concurrent(tmp_path, callbacks):
 
     messages = [{"role": "user", "content": "read"}]
 
-    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+    with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls, \
          patch("app.agent.Read", side_effect=slow_read):
         mock_client = AsyncMock()
@@ -174,7 +174,7 @@ async def test_denied_tool_returns_denied_result(tmp_path, callbacks):
 
     messages = [{"role": "user", "content": "read"}]
 
-    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+    with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls, \
          patch("app.agent.requires_confirmation", return_value=(True, "risky")):
         mock_client = AsyncMock()
@@ -214,7 +214,7 @@ async def test_mixed_approved_and_denied(tmp_path, callbacks):
 
     messages = [{"role": "user", "content": "read"}]
 
-    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+    with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls, \
          patch("app.agent.requires_confirmation", return_value=(True, "test")):
         mock_client = AsyncMock()
@@ -260,7 +260,7 @@ async def test_todo_write_calls_on_todo(callbacks):
 
     messages = [{"role": "user", "content": "plan a task"}]
 
-    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+    with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = fake_create
