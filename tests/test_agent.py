@@ -277,3 +277,238 @@ async def test_todo_write_calls_on_todo(callbacks):
     assert "Todo list updated" in tool_msgs[0]["content"]
     assert "● Step one" in tool_msgs[0]["content"]
     assert "○ Step two" in tool_msgs[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# run_agent coverage: text, tool, multi-turn, denied, usage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_single_text_response(callbacks):
+    """Agent returns a plain text response with no tool calls."""
+    chunks = [
+        _make_chunk(delta_content="Hello "),
+        _make_chunk(delta_content="world"),
+        _make_chunk(has_choices=False),
+    ]
+
+    async def fake_create(**kwargs):
+        return _make_stream(chunks)
+
+    messages = [{"role": "user", "content": "hi"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # on_text called for each chunk
+    assert callbacks["on_text"].await_count == 2
+    callbacks["on_text"].assert_any_await("Hello ")
+    callbacks["on_text"].assert_any_await("world")
+
+    # No tool activity
+    callbacks["on_tool_start"].assert_not_awaited()
+    callbacks["on_tool_result"].assert_not_awaited()
+
+    # Assistant message appended
+    assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert assistant_msgs[0]["content"] == "Hello world"
+    assert "tool_calls" not in assistant_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_single_tool_call(tmp_path, callbacks):
+    """Agent makes one Read tool call, gets the result, then replies with text."""
+    f = tmp_path / "data.txt"
+    f.write_text("file contents")
+
+    # Turn 1: model requests Read
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_r", name="Read",
+                             arguments=json.dumps({"file_path": str(f)})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    # Turn 2: model replies with text
+    text_chunks = [
+        _make_chunk(delta_content="Got it"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "read the file"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # Tool start and result reported
+    callbacks["on_tool_start"].assert_awaited_once_with("Read", json.dumps({"file_path": str(f)}))
+    callbacks["on_tool_result"].assert_awaited_once()
+    assert callbacks["on_tool_result"].call_args[0][0] == "Read"
+    assert callbacks["on_tool_result"].call_args[0][1] == "file contents"
+
+    # Messages: user, assistant (tool_calls), tool, assistant (text)
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert "tool_calls" in messages[1]
+    assert messages[2]["role"] == "tool"
+    assert messages[2]["content"] == "file contents"
+    assert messages[3]["role"] == "assistant"
+    assert messages[3]["content"] == "Got it"
+
+
+@pytest.mark.asyncio
+async def test_multi_turn_tool_loop(tmp_path, callbacks):
+    """Agent uses tools across two consecutive turns before giving a final text reply."""
+    f1 = tmp_path / "a.txt"
+    f1.write_text("aaa")
+    f2 = tmp_path / "b.txt"
+    f2.write_text("bbb")
+
+    # Turn 1: Read f1
+    turn1 = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="c1", name="Read",
+                             arguments=json.dumps({"file_path": str(f1)})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    # Turn 2: Read f2
+    turn2 = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="c2", name="Read",
+                             arguments=json.dumps({"file_path": str(f2)})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    # Turn 3: final text
+    turn3 = [
+        _make_chunk(delta_content="All done"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([turn1, turn2, turn3])
+    create_call_count = 0
+
+    async def fake_create(**kwargs):
+        nonlocal create_call_count
+        create_call_count += 1
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "go"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # Two tool calls executed across two turns
+    assert callbacks["on_tool_result"].await_count == 2
+    assert callbacks["on_tool_result"].call_args_list[0][0][1] == "aaa"
+    assert callbacks["on_tool_result"].call_args_list[1][0][1] == "bbb"
+
+    # create called 3 times (one per loop iteration)
+    assert create_call_count == 3
+
+    # Final message is assistant text
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["content"] == "All done"
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_skips_execution(tmp_path, callbacks):
+    """A denied tool call returns DENIED_RESULT and never touches the filesystem."""
+    f = tmp_path / "important.txt"
+    f.write_text("original")
+
+    # Model tries to write to the file
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_w", name="Write",
+                             arguments=json.dumps({"file_path": str(f), "content": "overwritten"})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    text_chunks = [
+        _make_chunk(delta_content="OK"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    async def deny_all(name, args, reason):
+        return False
+
+    callbacks["on_tool_confirm"] = deny_all
+    messages = [{"role": "user", "content": "write"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls, \
+         patch("app.agent.requires_confirmation", return_value=(True, "destructive")):
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # File untouched
+    assert f.read_text() == "original"
+
+    # Tool result is DENIED_RESULT
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["content"] == DENIED_RESULT
+
+    # on_tool_result still called so UI can show the denial
+    callbacks["on_tool_result"].assert_awaited_once()
+    assert callbacks["on_tool_result"].call_args[0][1] == DENIED_RESULT
+
+
+@pytest.mark.asyncio
+async def test_usage_tracking_callback(callbacks):
+    """on_usage is called with prompt tokens, completion tokens, and cost."""
+    usage = MagicMock()
+    usage.prompt_tokens = 100
+    usage.completion_tokens = 50
+    usage.cost = 0.0025
+
+    chunks = [
+        _make_chunk(delta_content="hi"),
+        _make_chunk(has_choices=False, usage=usage),
+    ]
+
+    async def fake_create(**kwargs):
+        return _make_stream(chunks)
+
+    on_usage = MagicMock()
+    callbacks["on_usage"] = on_usage
+    messages = [{"role": "user", "content": "hello"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    on_usage.assert_called_once_with(100, 50, 0.0025)
