@@ -118,12 +118,17 @@ class AgentApp(App):
         self._total_cost = 0.0
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._current_tool_block: ToolBlock | None = None
+        self._history: list[str] = []
+        self._history_index: int = 0
+        self._history_draft: str = ""
         self._model = DEFAULT_MODEL
         self._session_name = DEFAULT_SESSION
         saved = load_session(self._session_name)
         if saved is not None:
             self._messages: list = saved
-            user_turns = sum(1 for m in saved if m.get("role") == "user")
+            self._history = [m["content"] for m in saved if m.get("role") == "user"]
+            self._history_index = len(self._history)
+            user_turns = len(self._history)
             self._append_sync(Static(Text.assemble(
                 ("Loaded session ", "dim"),
                 (self._session_name, "bold"),
@@ -149,6 +154,33 @@ class AgentApp(App):
         container.scroll_end(animate=False)
         return widget
 
+    def on_key(self, event) -> None:
+        inp = self.query_one("#user-input", Input)
+        if not inp.has_focus:
+            return
+        if event.key == "up":
+            if not self._history:
+                return
+            event.prevent_default()
+            event.stop()
+            if self._history_index == len(self._history):
+                self._history_draft = inp.value
+            if self._history_index > 0:
+                self._history_index -= 1
+                inp.value = self._history[self._history_index]
+                inp.cursor_position = len(inp.value)
+        elif event.key == "down":
+            if self._history_index >= len(self._history):
+                return
+            event.prevent_default()
+            event.stop()
+            self._history_index += 1
+            if self._history_index == len(self._history):
+                inp.value = self._history_draft
+            else:
+                inp.value = self._history[self._history_index]
+            inp.cursor_position = len(inp.value)
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self._send(event.value)
 
@@ -158,6 +190,10 @@ class AgentApp(App):
             return
         inp = self.query_one("#user-input", Input)
         inp.value = ""
+
+        self._history.append(text)
+        self._history_index = len(self._history)
+        self._history_draft = ""
 
         if self._pending_confirm is not None and not self._pending_confirm.done():
             self._answer_confirm(text)
@@ -180,6 +216,8 @@ class AgentApp(App):
             self._messages = [{"role": "system", "content": load_system_prompt()}]
             clear_session(self._session_name)
             self._current_tool_block = None
+            self._history.clear()
+            self._history_index = 0
             self._container().remove_children()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
             return
@@ -289,6 +327,8 @@ class AgentApp(App):
             self._session_name = arg
             self._messages = [{"role": "system", "content": load_system_prompt()}]
             self._current_tool_block = None
+            self._history.clear()
+            self._history_index = 0
             self._container().remove_children()
             self._append_sync(Static(Text.assemble(
                 ("Created and switched to session ", "dim"),
@@ -308,8 +348,10 @@ class AgentApp(App):
             self._session_name = arg
             self._messages = saved
             self._current_tool_block = None
+            self._history = [m["content"] for m in saved if m.get("role") == "user"]
+            self._history_index = len(self._history)
             self._container().remove_children()
-            user_turns = sum(1 for m in saved if m.get("role") == "user")
+            user_turns = len(self._history)
             self._append_sync(Static(Text.assemble(
                 ("Loaded session ", "dim"),
                 (arg, "bold"),
