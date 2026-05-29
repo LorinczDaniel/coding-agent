@@ -25,6 +25,11 @@ MODELS = {
 }
 DEFAULT_MODEL = "haiku"
 
+CONTEXT_WINDOWS = {
+    "anthropic/claude-haiku-4.5": 200_000,
+    "anthropic/claude-sonnet-4-6": 200_000,
+}
+
 
 async def run_agent(
     messages: list,
