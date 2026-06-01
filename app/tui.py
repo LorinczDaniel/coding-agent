@@ -13,7 +13,7 @@ from .config import load_system_prompt
 from .format import format_usage
 from .session import (
     clear_session, load_session, save_session, list_sessions,
-    DEFAULT_SESSION, _validate_name,
+    DEFAULT_SESSION, _validate_name, export_conversation,
 )
 from .widgets import ToolBlock, TodoPanel, build_tool_body
 
@@ -203,6 +203,7 @@ class AgentApp(App):
             for line in [
                 "/help                          Show this help message",
                 "/clear                         Clear current conversation",
+                "/export [filename]             Export conversation to Markdown",
                 "/model [name]                  Show or switch the active model",
                 "/sessions [list|new|load|delete]  Manage named sessions",
                 "/todo-clear                    Clear the todo panel",
@@ -227,6 +228,22 @@ class AgentApp(App):
             panel.todos = []
             panel.display = False
             self._append_sync(Static(Text("Todo list cleared.", style="dim")))
+            return
+
+        if text == "/export" or text.startswith("/export "):
+            filename = text[7:].strip()
+            try:
+                path = export_conversation(self._messages, filename or None)
+            except OSError as exc:
+                self._append_sync(Static(Text.assemble(
+                    ("Export failed: ", "bold red"),
+                    (str(exc), "white"),
+                )))
+            else:
+                self._append_sync(Static(Text.assemble(
+                    ("Exported conversation to ", "dim"),
+                    (str(path), "bold"),
+                )))
             return
 
         if text.startswith("/sessions"):

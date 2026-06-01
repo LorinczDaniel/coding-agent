@@ -57,3 +57,56 @@ def list_sessions() -> list[str]:
     if not d.exists():
         return []
     return sorted(p.stem for p in d.glob("*.json"))
+
+
+def _message_content_to_text(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, indent=2)
+    except TypeError:
+        return str(content)
+
+
+def conversation_to_markdown(messages: list) -> str:
+    lines = ["# Conversation Export", ""]
+    exported = False
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "user":
+            heading = "User"
+        elif role == "assistant":
+            heading = "Agent"
+        else:
+            continue
+
+        content = _message_content_to_text(message.get("content"))
+        if not content.strip():
+            continue
+
+        lines.extend([f"## {heading}", "", content.rstrip(), ""])
+        exported = True
+
+    if not exported:
+        lines.extend(["_No user or agent messages to export._", ""])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def export_conversation(messages: list, filename: str | Path | None = None) -> Path:
+    raw_filename = str(filename or "").strip()
+    path = Path(raw_filename) if raw_filename else Path("conversation.md")
+    path = path.expanduser()
+    if not path.suffix:
+        path = path.with_suffix(".md")
+    if not path.is_absolute():
+        path = Path.cwd() / path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(conversation_to_markdown(messages), encoding="utf-8")
+    return path
