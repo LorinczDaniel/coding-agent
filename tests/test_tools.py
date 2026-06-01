@@ -1,3 +1,6 @@
+import shlex
+import sys
+
 from app.tools import Bash, Edit, Glob, Grep, Write, TodoWrite
 
 
@@ -217,6 +220,16 @@ def test_bash_stdout_after_exit_marker():
     result = Bash("echo hello")
     assert result.startswith("[exit 0]")
     assert "hello" in result
+
+
+def test_bash_keeps_stdout_and_stderr_separate():
+    code = "import sys; print('out'); print('warn', file=sys.stderr)"
+    result = Bash(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}")
+
+    assert result.startswith("[exit 0]")
+    assert "[stdout]\nout\n" in result
+    assert "[stderr]\nwarn\n" in result
+    assert result.index("[stdout]") < result.index("[stderr]")
 
 
 # --- TodoWrite ---

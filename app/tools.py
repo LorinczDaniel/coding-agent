@@ -196,9 +196,11 @@ def Bash(command: str, timeout: int = 120) -> str:
         )
     except subprocess.TimeoutExpired:
         return f"[error] Command timed out after {timeout}s: {command}"
-    output = result.stdout
+    output = ""
+    if result.stdout:
+        output += f"[stdout]\n{result.stdout}"
     if result.stderr:
-        output += result.stderr
+        output += f"[stderr]\n{result.stderr}"
     return f"[exit {result.returncode}]\n{output}"
 
 
