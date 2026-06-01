@@ -5,7 +5,7 @@ from textual.containers import Vertical
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from .format import diff_line_style, is_diff, parse_exit_code
+from .format import diff_line_style, is_diff, parse_exit_code, split_bash_streams
 
 MAX_BLOCK_LINES = 15
 
@@ -23,6 +23,21 @@ def _line_renderables(lines: list[str], style):
     hidden_lines = lines[MAX_BLOCK_LINES:]
     hidden = _join([mk(line) for line in hidden_lines]) if hidden_lines else None
     return _join(preview), hidden, len(hidden_lines)
+
+
+def _bash_renderables(body: str):
+    rendered: list[Text] = []
+    for stream, text in split_bash_streams(body):
+        label_style = "dim cyan" if stream == "stdout" else "bold red"
+        line_style = "white" if stream == "stdout" else "dim red"
+        rendered.append(Text.assemble(("│ ", "dim"), (stream, label_style)))
+        for line in text.rstrip("\n").splitlines():
+            rendered.append(Text.assemble(("│ ", "dim"), (line, line_style)))
+
+    preview_lines = rendered[:MAX_BLOCK_LINES]
+    hidden_lines = rendered[MAX_BLOCK_LINES:]
+    hidden = _join(hidden_lines) if hidden_lines else None
+    return _join(preview_lines), hidden, len(hidden_lines)
 
 
 def _read_renderables(result: str, file_path: str):
@@ -53,7 +68,7 @@ def build_tool_body(name: str, result: str, args: dict):
     """Return (preview, hidden_or_None, hidden_count, exit_code_or_None)."""
     if name == "Bash":
         code, body = parse_exit_code(result)
-        preview, hidden, count = _line_renderables(body.strip().splitlines(), "white")
+        preview, hidden, count = _bash_renderables(body)
         return preview, hidden, count, code
     if name in ("Write", "Edit") and is_diff(result):
         preview, hidden, count = _line_renderables(result.splitlines(), diff_line_style)

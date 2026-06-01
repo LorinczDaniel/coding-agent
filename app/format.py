@@ -1,6 +1,7 @@
 import re
 
 _EXIT_RE = re.compile(r"\[exit (-?\d+)\]\n?")
+_BASH_STREAM_RE = re.compile(r"^\[(stdout|stderr)\]\n?", re.MULTILINE)
 
 
 def _format_tokens(n: int) -> str:
@@ -30,6 +31,27 @@ def parse_exit_code(result: str) -> tuple[int | None, str]:
     if not m:
         return None, result
     return int(m.group(1)), result[m.end():]
+
+
+def split_bash_streams(body: str) -> list[tuple[str, str]]:
+    """Split Bash output marked with [stdout]/[stderr] sections."""
+    matches = list(_BASH_STREAM_RE.finditer(body))
+    if not matches:
+        return [("stdout", body)] if body else []
+
+    streams: list[tuple[str, str]] = []
+    prefix = body[:matches[0].start()]
+    if prefix.strip():
+        streams.append(("stdout", prefix))
+
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        text = body[start:end]
+        if text:
+            streams.append((match.group(1), text))
+
+    return streams
 
 
 def diff_line_style(line: str) -> str:

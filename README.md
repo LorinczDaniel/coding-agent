@@ -15,7 +15,7 @@ claude-agent gives you a conversational interface to an AI that can actually act
 | **Read** | Reads and returns the full contents of any file |
 | **Write** | Creates a new file or fully overwrites an existing one |
 | **Edit** | Replaces an exact string in an existing file (preferred for modifications) |
-| **Bash** | Runs any shell command and returns stdout + stderr |
+| **Bash** | Runs any shell command and returns stdout and stderr separately |
 | **Glob** | Finds files matching a glob pattern (e.g. `**/*.py`) |
 | **Grep** | Searches file contents with a regex |
 | **TodoWrite** | Tracks multi-step plans with a todo panel |
@@ -41,7 +41,7 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Rich tool output** —
   - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions) instead of dumping the whole file; new files render as all-additions
   - `Read` output is **syntax-highlighted** (lexer guessed from the file extension) with line numbers
-  - `Bash` blocks show the command's **exit code** in the closing line (green for 0, red otherwise)
+  - `Bash` blocks show **stdout** and **stderr** as separate sections, with stderr dimmed red, and show the command's **exit code** in the closing line (green for 0, red otherwise)
   - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest (full content always goes to the model)
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more

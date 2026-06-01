@@ -1,4 +1,10 @@
-from app.format import diff_line_style, format_usage, is_diff, parse_exit_code
+from app.format import (
+    diff_line_style,
+    format_usage,
+    is_diff,
+    parse_exit_code,
+    split_bash_streams,
+)
 
 
 def test_format_usage_zero():
@@ -40,6 +46,22 @@ def test_parse_exit_code_no_marker():
     code, body = parse_exit_code("just some output")
     assert code is None
     assert body == "just some output"
+
+
+# --- split_bash_streams ---
+
+def test_split_bash_streams_stdout_and_stderr():
+    streams = split_bash_streams("[stdout]\nout\n[stderr]\nwarn\n")
+    assert streams == [("stdout", "out\n"), ("stderr", "warn\n")]
+
+
+def test_split_bash_streams_legacy_body_is_stdout():
+    streams = split_bash_streams("plain output\n")
+    assert streams == [("stdout", "plain output\n")]
+
+
+def test_split_bash_streams_empty_body():
+    assert split_bash_streams("") == []
 
 
 # --- diff_line_style ---
