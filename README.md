@@ -46,6 +46,7 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
 - **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
+- **Markdown export** — `/export [filename]` writes the current user/agent conversation to a Markdown file for documentation or sharing, excluding raw tool calls and tool output.
 - **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
 - **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
 - **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, the agent pauses and asks for approval inline in the conversation. Type `y` to approve or `n` to deny in the normal input box — denying tells the model "user denied this; do not retry" so it adapts instead of looping. (`Esc` still interrupts the whole turn.)
@@ -56,6 +57,7 @@ On startup the agent is told its working directory and a guess at the project ty
 |---|---|
 | `/help` | Show all available commands |
 | `/clear` | Clear the current conversation |
+| `/export [filename]` | Export the current conversation to Markdown |
 | `/model` | Show current model and available options |
 | `/model <name>` | Switch to a different model (e.g. `haiku`, `sonnet`) |
 | `/sessions` | List all sessions for this directory |
@@ -140,6 +142,7 @@ Type a message and press **Enter** or click **Send**. The agent streams its resp
 | Command | Action |
 |---|---|
 | `/clear` | Reset the conversation back to just the system prompt and delete the saved session file. Useful when the context gets long, expensive, or off-track. |
+| `/export [filename]` | Write the current conversation to Markdown. If no filename is provided, exports to `conversation.md`. |
 
 ### Example prompts
 
@@ -210,7 +213,7 @@ app/
   agent.py     # async agent loop, OpenRouter streaming, tool dispatch
   tools.py     # Read, Write, Edit, Bash, Glob, Grep implementations + tool schemas
   config.py    # system prompt + working-directory / project-type injection
-  session.py   # save/load/clear the .agent_session.json conversation file
+  session.py   # save/load/clear sessions and export conversations to Markdown
   format.py    # UI-agnostic formatting helpers (usage / cost line)
   permissions.py    # risky-pattern detection, auto-allow config, .agent_config.json loader
   widgets.py        # ToolBlock / ToolToggle widgets + build_tool_body (diff/syntax/exit rendering)

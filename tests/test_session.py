@@ -8,6 +8,8 @@ from app.session import (
     load_session,
     clear_session,
     list_sessions,
+    conversation_to_markdown,
+    export_conversation,
     DEFAULT_SESSION,
 )
 
@@ -110,3 +112,53 @@ def test_clear_removes_specific_session(tmp_path, monkeypatch):
     clear_session("remove")
     assert list_sessions() == ["keep"]
     assert load_session("keep") is not None
+
+
+def test_conversation_to_markdown_filters_tools_and_system():
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "Please inspect app.py"},
+        {
+            "role": "assistant",
+            "content": "I'll inspect it.",
+            "tool_calls": [{"function": {"name": "Read"}}],
+        },
+        {"role": "tool", "content": "SECRET RAW TOOL OUTPUT"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1"}]},
+        {"role": "assistant", "content": "The issue is fixed."},
+    ]
+
+    markdown = conversation_to_markdown(messages)
+
+    assert markdown == (
+        "# Conversation Export\n\n"
+        "## User\n\n"
+        "Please inspect app.py\n\n"
+        "## Agent\n\n"
+        "I'll inspect it.\n\n"
+        "## Agent\n\n"
+        "The issue is fixed.\n"
+    )
+    assert "system prompt" not in markdown
+    assert "SECRET RAW TOOL OUTPUT" not in markdown
+    assert "tool_calls" not in markdown
+    assert "call_1" not in markdown
+
+
+def test_export_conversation_writes_markdown_file(tmp_path):
+    messages = [
+        {"role": "user", "content": "Document this"},
+        {"role": "assistant", "content": "Done"},
+        {"role": "tool", "content": "raw output"},
+    ]
+
+    path = export_conversation(messages, tmp_path / "shared-chat")
+
+    assert path == tmp_path / "shared-chat.md"
+    assert path.read_text(encoding="utf-8") == (
+        "# Conversation Export\n\n"
+        "## User\n\n"
+        "Document this\n\n"
+        "## Agent\n\n"
+        "Done\n"
+    )
