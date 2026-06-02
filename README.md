@@ -46,7 +46,7 @@ On startup the agent is told its working directory and a guess at the project ty
   - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
-- **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
+- **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, rename, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
 - **Markdown export** — `/export [filename]` writes the current user/agent conversation to a Markdown file for documentation or sharing, excluding raw tool calls and tool output.
 - **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
 - **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
@@ -64,6 +64,7 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/sessions` | List all sessions for this directory |
 | `/sessions new <name>` | Create and switch to a new named session |
 | `/sessions load <name>` | Switch to an existing session |
+| `/sessions rename <old> <new>` | Rename a saved session |
 | `/sessions delete <name>` | Delete a saved session |
 | `/todo-clear` | Clear the todo panel |
 

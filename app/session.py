@@ -52,6 +52,30 @@ def clear_session(name: str = DEFAULT_SESSION) -> None:
     _session_path(name).unlink(missing_ok=True)
 
 
+def rename_session(old_name: str, new_name: str) -> str | None:
+    err = _validate_name(old_name)
+    if err:
+        return err
+    err = _validate_name(new_name)
+    if err:
+        return err
+    if old_name == new_name:
+        return "New session name must be different."
+
+    old_path = _session_path(old_name)
+    new_path = _session_path(new_name)
+    if not old_path.exists():
+        return f"Session '{old_name}' not found."
+    if new_path.exists():
+        return f"Session '{new_name}' already exists."
+
+    try:
+        old_path.rename(new_path)
+    except OSError as exc:
+        return f"Could not rename session: {exc}"
+    return None
+
+
 def list_sessions() -> list[str]:
     d = _sessions_dir()
     if not d.exists():
