@@ -13,7 +13,7 @@ from .config import load_system_prompt
 from .format import format_usage
 from .session import (
     clear_session, load_session, save_session, list_sessions,
-    DEFAULT_SESSION, _validate_name, export_conversation,
+    DEFAULT_SESSION, _validate_name, export_conversation, rename_session,
 )
 from .widgets import ToolBlock, TodoPanel, build_tool_body
 
@@ -205,7 +205,7 @@ class AgentApp(App):
                 "/clear                         Clear current conversation",
                 "/export [filename]             Export conversation to Markdown",
                 "/model [name]                  Show or switch the active model",
-                "/sessions [list|new|load|delete]  Manage named sessions",
+                "/sessions [list|new|load|delete|rename]  Manage named sessions",
                 "/todo-clear                    Clear the todo panel",
                 "",
                 "Ctrl+X to quit, Escape to interrupt the agent.",
@@ -314,6 +314,7 @@ class AgentApp(App):
                 "/sessions new <name>   Create and switch to a new session",
                 "/sessions load <name>  Switch to an existing session",
                 "/sessions delete <name>  Delete a saved session",
+                "/sessions rename <old> <new>  Rename a saved session",
             ]:
                 self._append_sync(Static(Text(f"  {line}", style="dim")))
             return
@@ -390,6 +391,27 @@ class AgentApp(App):
             self._append_sync(Static(Text.assemble(
                 ("Deleted session ", "dim"),
                 (arg, "bold"),
+            )))
+            return
+
+        if sub == "rename":
+            new_name = parts[3] if len(parts) > 3 else ""
+            if not arg or not new_name or len(parts) > 4:
+                self._append_sync(Static(Text("Usage: /sessions rename <old> <new>", style="dim")))
+                return
+            if arg == self._session_name:
+                save_session(self._messages, self._session_name)
+            err = rename_session(arg, new_name)
+            if err:
+                self._append_sync(Static(Text(err, style="bold red")))
+                return
+            if arg == self._session_name:
+                self._session_name = new_name
+            self._append_sync(Static(Text.assemble(
+                ("Renamed session ", "dim"),
+                (arg, "bold"),
+                (" to ", "dim"),
+                (new_name, "bold"),
             )))
             return
 

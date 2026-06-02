@@ -7,6 +7,7 @@ from app.session import (
     save_session,
     load_session,
     clear_session,
+    rename_session,
     list_sessions,
     conversation_to_markdown,
     export_conversation,
@@ -112,6 +113,59 @@ def test_clear_removes_specific_session(tmp_path, monkeypatch):
     clear_session("remove")
     assert list_sessions() == ["keep"]
     assert load_session("keep") is not None
+
+
+def test_rename_session_preserves_history(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+    ]
+    save_session(messages, "old-name")
+
+    err = rename_session("old-name", "new-name")
+
+    assert err is None
+    assert load_session("old-name") is None
+    assert load_session("new-name") == messages
+    assert list_sessions() == ["new-name"]
+
+
+def test_rename_session_refuses_existing_target(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "old"}], "old")
+    save_session([{"role": "user", "content": "target"}], "target")
+
+    err = rename_session("old", "target")
+    assert err == "Session 'target' already exists."
+    assert load_session("old") == [{"role": "user", "content": "old"}]
+    assert load_session("target") == [{"role": "user", "content": "target"}]
+
+
+def test_rename_session_missing_source(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+
+    err = rename_session("missing", "new-name")
+    assert err == "Session 'missing' not found."
+
+
+def test_rename_session_invalid_name(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "old"}], "old")
+
+    err = rename_session("old", "new name")
+    assert err == "Session name must contain only letters, digits, hyphens, and underscores."
+    assert load_session("old") is not None
+
+
+def test_rename_session_same_name(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "old"}], "same")
+
+    err = rename_session("same", "same")
+    assert err == "New session name must be different."
+    assert load_session("same") is not None
 
 
 def test_conversation_to_markdown_filters_tools_and_system():
