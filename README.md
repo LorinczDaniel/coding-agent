@@ -42,7 +42,8 @@ On startup the agent is told its working directory and a guess at the project ty
   - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions) instead of dumping the whole file; new files render as all-additions
   - `Read` output is **syntax-highlighted** (lexer guessed from the file extension) with line numbers
   - `Bash` blocks show **stdout** and **stderr** as separate sections, with stderr dimmed red, and show the command's **exit code** in the closing line (green for 0, red otherwise)
-  - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest (full content always goes to the model)
+  - `Read` and `Bash` results over 50KB are truncated before rendering, keeping the beginning and end with an explicit truncated marker
+  - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
 - **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
@@ -223,7 +224,7 @@ app/
 
 ## Limitations
 
-- Tool output shows the first 15 lines by default; click `▸ show N more lines` to expand (full output is always sent to the model)
+- Tool output shows the first 15 lines by default; click `▸ show N more lines` to expand. `Read` and `Bash` results are capped at 50KB before display and model context to avoid terminal freezes.
 - No parallel tool execution — tools run sequentially
 - Session file is per-directory — launching the agent from a different cwd starts a fresh conversation
 - `Esc` only takes effect at the next `await` — if the agent is blocked inside a long-running synchronous tool call (e.g. a slow `Bash` command), the interrupt waits until that tool returns
