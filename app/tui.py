@@ -35,6 +35,32 @@ def _format_tool_args(args: dict) -> str:
     return "\n".join(parts)
 
 
+def _message_text(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, indent=2)
+    except TypeError:
+        return str(content)
+
+
+def _session_transcript(messages: list) -> list[tuple[str, str]]:
+    transcript: list[tuple[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _message_text(message.get("content"))
+        if not text.strip():
+            continue
+        transcript.append((role, text))
+    return transcript
+
+
 class AgentApp(App):
     TITLE = "Agent Daniel"
     BINDINGS = [
@@ -113,9 +139,6 @@ class AgentApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
-        self._total_in = 0
-        self._total_out = 0
-        self._total_cost = 0.0
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._current_tool_block: ToolBlock | None = None
         self._history: list[str] = []
@@ -123,6 +146,7 @@ class AgentApp(App):
         self._history_draft: str = ""
         self._model = DEFAULT_MODEL
         self._session_name = DEFAULT_SESSION
+        self._reset_usage()
         saved = load_session(self._session_name)
         if saved is not None:
             self._messages: list = saved
@@ -137,6 +161,7 @@ class AgentApp(App):
                 ("/clear", "bold yellow"),
                 (" to start fresh.", "dim"),
             )))
+            self._append_session_transcript(saved)
         else:
             self._messages = [{"role": "system", "content": load_system_prompt()}]
 
@@ -148,11 +173,39 @@ class AgentApp(App):
         container.mount(widget)
         container.scroll_end(animate=False)
 
+    def _append_session_transcript(self, messages: list) -> None:
+        for role, text in _session_transcript(messages):
+            if role == "user":
+                self._append_sync(Static(Text.assemble(("You: ", "bold green"), (text, "white"))))
+            else:
+                rendered = _md_to_rich(text)
+                self._append_sync(Static(Text.from_markup(f"[bold blue]Agent:[/bold blue] {rendered}")))
+
     async def _append(self, widget):
         container = self._container()
         await container.mount(widget)
         container.scroll_end(animate=False)
         return widget
+
+    def _context_window(self) -> int:
+        return CONTEXT_WINDOWS.get(MODELS[self._model], 0)
+
+    def _update_usage_bar(self) -> None:
+        self.query_one("#usage-bar", Static).update(
+            format_usage(
+                self._total_in,
+                self._total_out,
+                self._total_cost,
+                self._model,
+                self._context_window(),
+            )
+        )
+
+    def _reset_usage(self) -> None:
+        self._total_in = 0
+        self._total_out = 0
+        self._total_cost = 0.0
+        self._update_usage_bar()
 
     def on_key(self, event) -> None:
         inp = self.query_one("#user-input", Input)
@@ -220,6 +273,7 @@ class AgentApp(App):
             self._history.clear()
             self._history_index = 0
             self._container().remove_children()
+            self._reset_usage()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
             return
 
@@ -273,9 +327,7 @@ class AgentApp(App):
                     ("Switched to ", "dim"),
                     (arg, "bold"),
                 )))
-                self.query_one("#usage-bar", Static).update(
-                    format_usage(self._total_in, self._total_out, self._total_cost, self._model, CONTEXT_WINDOWS.get(MODELS[self._model], 0))
-                )
+                self._update_usage_bar()
             else:
                 options = ", ".join(MODELS)
                 self._append_sync(Static(Text.assemble(
@@ -348,6 +400,7 @@ class AgentApp(App):
             self._history.clear()
             self._history_index = 0
             self._container().remove_children()
+            self._reset_usage()
             self._append_sync(Static(Text.assemble(
                 ("Created and switched to session ", "dim"),
                 (arg, "bold"),
@@ -369,12 +422,14 @@ class AgentApp(App):
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
             self._container().remove_children()
+            self._reset_usage()
             user_turns = len(self._history)
             self._append_sync(Static(Text.assemble(
                 ("Loaded session ", "dim"),
                 (arg, "bold"),
                 (f" ({user_turns} user turn{'s' if user_turns != 1 else ''}).", "dim"),
             )))
+            self._append_session_transcript(saved)
             return
 
         if sub == "delete":
@@ -478,10 +533,8 @@ class AgentApp(App):
             self._total_in += prompt
             self._total_out += completion
             self._total_cost += cost
-            ctx_window = CONTEXT_WINDOWS.get(MODELS[self._model], 0)
-            self.query_one("#usage-bar", Static).update(
-                format_usage(self._total_in, self._total_out, self._total_cost, self._model, ctx_window)
-            )
+            ctx_window = self._context_window()
+            self._update_usage_bar()
             if ctx_window > 0:
                 ratio = self._total_in / ctx_window
                 if ratio >= 0.9:
