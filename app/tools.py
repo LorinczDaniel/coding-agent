@@ -5,6 +5,97 @@ import sys
 from pathlib import Path
 
 _SKIP_DIRS = {".git", ".venv"}
+MAX_TOOL_OUTPUT_CHARS = 50 * 1024
+TRUNCATED_SECTION_LINES = 200
+
+
+def _take_head(lines: list[str], budget: int) -> str:
+    chunks: list[str] = []
+    used = 0
+    for line in lines[:TRUNCATED_SECTION_LINES]:
+        if used + len(line) > budget:
+            remaining = budget - used
+            if remaining > 0:
+                chunks.append(line[:remaining])
+            break
+        chunks.append(line)
+        used += len(line)
+    return "".join(chunks)
+
+
+def _take_tail(lines: list[str], budget: int) -> str:
+    chunks: list[str] = []
+    used = 0
+    for line in reversed(lines[-TRUNCATED_SECTION_LINES:]):
+        if used + len(line) > budget:
+            remaining = budget - used
+            if remaining > 0:
+                chunks.append(line[-remaining:])
+            break
+        chunks.append(line)
+        used += len(line)
+    return "".join(reversed(chunks))
+
+
+def _truncate_output(text: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+    if len(text) <= max_chars:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    marker = (
+        f"\n[output truncated: original {len(text):,} chars across {len(lines):,} lines; "
+        f"showing first and last up to {TRUNCATED_SECTION_LINES} lines]\n"
+    )
+    available = max_chars - len(marker)
+    if available <= 0:
+        return marker[:max_chars]
+
+    head_budget = available // 2
+    tail_budget = available - head_budget
+    return _take_head(lines, head_budget) + marker + _take_tail(lines, tail_budget)
+
+
+def _split_stream_budget(streams: list[tuple[str, str]], available: int) -> dict[str, int]:
+    budgets: dict[str, int] = {}
+    remaining = available
+    pending = streams[:]
+
+    while pending:
+        share = max(1, remaining // len(pending))
+        oversized: list[tuple[str, str]] = []
+        for name, text in pending:
+            if len(text) <= share:
+                budgets[name] = len(text)
+                remaining -= len(text)
+            else:
+                oversized.append((name, text))
+
+        if len(oversized) == len(pending):
+            for name, _ in oversized:
+                budgets[name] = share
+            break
+
+        pending = oversized
+
+    return budgets
+
+
+def _format_bash_output(returncode: int, stdout: str, stderr: str) -> str:
+    prefix = f"[exit {returncode}]\n"
+    streams = [("stdout", stdout)] if stdout else []
+    if stderr:
+        streams.append(("stderr", stderr))
+    if not streams:
+        return prefix
+
+    labels_size = sum(len(f"[{name}]\n") for name, _ in streams)
+    available = max(1, MAX_TOOL_OUTPUT_CHARS - len(prefix) - labels_size)
+    budgets = _split_stream_budget(streams, available)
+    output = "".join(
+        f"[{name}]\n{_truncate_output(text, budgets[name])}"
+        for name, text in streams
+    )
+    return prefix + output
 
 
 def _make_diff(old: str, new: str, path: str, max_lines: int = 300) -> str:
@@ -25,7 +116,7 @@ READ_TOOL = {
     "type": "function",
     "function": {
         "name": "Read",
-        "description": "Read and return the content of a file.",
+        "description": "Read and return the content of a file. Large results are truncated to 50KB with the beginning and end preserved.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -82,7 +173,7 @@ BASH_TOOL = {
     "type": "function",
     "function": {
         "name": "Bash",
-        "description": "Execute a shell command.",
+        "description": "Execute a shell command. Large stdout/stderr results are truncated to 50KB with the beginning and end preserved.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -134,7 +225,7 @@ GREP_TOOL = {
 def Read(file_path: str) -> str:
     try:
         with open(file_path) as f:
-            return f.read()
+            return _truncate_output(f.read())
     except Exception as e:
         error_msg = f"Error reading file: {e}"
         print(error_msg, file=sys.stderr)
@@ -196,12 +287,7 @@ def Bash(command: str, timeout: int = 120) -> str:
         )
     except subprocess.TimeoutExpired:
         return f"[error] Command timed out after {timeout}s: {command}"
-    output = ""
-    if result.stdout:
-        output += f"[stdout]\n{result.stdout}"
-    if result.stderr:
-        output += f"[stderr]\n{result.stderr}"
-    return f"[exit {result.returncode}]\n{output}"
+    return _format_bash_output(result.returncode, result.stdout, result.stderr)
 
 
 def Glob(pattern: str, path: str = ".") -> str:

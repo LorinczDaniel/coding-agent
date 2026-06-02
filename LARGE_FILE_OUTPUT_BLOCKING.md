@@ -88,6 +88,9 @@ def print_in_chunks(content, chunk_size=10000):
         print(content[i:i+chunk_size])
 ```
 
+### 5. Cap Tool Output
+The agent caps `Read` and `Bash` tool results at 50KB before sending them to the UI or model context. Truncated output keeps the beginning and end of the original output with an explicit marker showing that middle content was omitted.
+
 ## Key Takeaway
 
 **Writing data is fast, but displaying it is slow.**
@@ -97,3 +100,4 @@ When you have lots of data:
 - ✗ Printing everything to terminal will block
 - ✓ Process data in chunks or selectively
 - ✓ Use file I/O instead of terminal output
+- ✓ Cap tool output before rendering it
