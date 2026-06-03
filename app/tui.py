@@ -9,7 +9,17 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
-from .agents import COACH_PROFILE, DEFAULT_PROFILE, get_profile, list_profiles
+from .agents import (
+    AgentProfile,
+    COACH_PROFILE,
+    DEFAULT_PROFILE,
+    available_tool_names,
+    get_profile,
+    list_profiles,
+    save_custom_profile,
+    validate_allowed_tools,
+    validate_profile_name,
+)
 from .config import load_system_prompt
 from .format import format_usage
 from .session import (
@@ -171,6 +181,7 @@ class AgentApp(App):
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
         self._pending_confirm: asyncio.Future[bool] | None = None
+        self._pending_agent_create: dict[str, object] | None = None
         self._current_tool_block: ToolBlock | None = None
         self._history: list[str] = []
         self._history_index: int = 0
@@ -285,6 +296,10 @@ class AgentApp(App):
             self._answer_confirm(text)
             return
 
+        if self._pending_agent_create is not None:
+            self._answer_agent_create(text)
+            return
+
         if text == "/help":
             for line in [
                 "/help                          Show this help message",
@@ -292,6 +307,7 @@ class AgentApp(App):
                 "/export [filename]             Export conversation to Markdown",
                 "/learn <thing>                 Start a guided build-your-own lesson",
                 "/agent [name]                  Show or switch the active agent profile",
+                "/agent create [name]           Create a custom agent profile",
                 "/model [name]                  Show or switch the active model",
                 "/sessions [list|new|load|delete|rename]  Manage named sessions",
                 "/todo-clear                    Clear the todo panel",
@@ -396,6 +412,158 @@ class AgentApp(App):
             self._pending_confirm.set_result(False)
         else:
             self._append_sync(Static(Text("Please answer y (approve) or n (deny).", style="dim")))
+
+    def _validate_new_agent_profile_name(self, name: str) -> str | None:
+        err = validate_profile_name(name)
+        if err:
+            return err
+        try:
+            get_profile(name)
+        except ValueError:
+            return None
+        return f"Agent profile '{name}' already exists."
+
+    def _parse_agent_tools(self, text: str) -> tuple[tuple[str, ...] | None, str | None]:
+        value = text.strip()
+        if value.lower() == "all":
+            return available_tool_names(), None
+
+        names = [part for part in re.split(r"[\s,]+", value) if part]
+        by_lower = {tool_name.lower(): tool_name for tool_name in available_tool_names()}
+        normalized = [by_lower.get(name.lower(), name) for name in names]
+        return validate_allowed_tools(normalized)
+
+    def _append_agent_create_prompt(self) -> None:
+        state = self._pending_agent_create
+        if state is None:
+            return
+        step = state.get("step")
+        if step == "name":
+            self._append_sync(Static(Text(
+                "Profile name: lowercase letters, digits, hyphens, and underscores; start with a letter.",
+                style="dim",
+            )))
+        elif step == "title":
+            self._append_sync(Static(Text("Display title:", style="dim")))
+        elif step == "description":
+            self._append_sync(Static(Text("Description:", style="dim")))
+        elif step == "allowed_tools":
+            tools = ", ".join(available_tool_names())
+            self._append_sync(Static(Text(
+                f"Allowed tools (comma-separated, or all). Available: {tools}",
+                style="dim",
+            )))
+        elif step == "system_addendum":
+            self._append_sync(Static(Text("Prompt instructions:", style="dim")))
+
+    def _start_agent_create(self, name: str = "") -> None:
+        state: dict[str, object] = {
+            "step": "name",
+            "name": "",
+            "title": "",
+            "description": "",
+            "allowed_tools": (),
+            "system_addendum": "",
+        }
+        self._pending_agent_create = state
+        self._append_sync(Static(Text("Creating a custom agent profile. Type cancel to stop.", style="dim")))
+
+        if name:
+            err = self._validate_new_agent_profile_name(name)
+            if err:
+                self._pending_agent_create = None
+                self._append_sync(Static(Text(err, style="bold red")))
+                return
+            state["name"] = name
+            state["step"] = "title"
+
+        self._append_agent_create_prompt()
+
+    def _answer_agent_create(self, text: str) -> None:
+        state = self._pending_agent_create
+        if state is None:
+            return
+        value = text.strip()
+        if value.lower() == "cancel":
+            self._pending_agent_create = None
+            self._append_sync(Static(Text("Agent profile creation cancelled.", style="dim")))
+            return
+
+        step = state.get("step")
+        if step == "name":
+            err = self._validate_new_agent_profile_name(value)
+            if err:
+                self._append_sync(Static(Text(err, style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            state["name"] = value
+            state["step"] = "title"
+            self._append_agent_create_prompt()
+            return
+
+        if step == "title":
+            if not value:
+                self._append_sync(Static(Text("Agent profile title cannot be empty.", style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            state["title"] = value
+            state["step"] = "description"
+            self._append_agent_create_prompt()
+            return
+
+        if step == "description":
+            if not value:
+                self._append_sync(Static(Text("Agent profile description cannot be empty.", style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            state["description"] = value
+            state["step"] = "allowed_tools"
+            self._append_agent_create_prompt()
+            return
+
+        if step == "allowed_tools":
+            tools, err = self._parse_agent_tools(value)
+            if err:
+                self._append_sync(Static(Text(err, style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            state["allowed_tools"] = tools
+            state["step"] = "system_addendum"
+            self._append_agent_create_prompt()
+            return
+
+        if step == "system_addendum":
+            if not value:
+                self._append_sync(Static(Text("Agent profile instructions cannot be empty.", style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            state["system_addendum"] = value
+            allowed_tools = state["allowed_tools"]
+            if not isinstance(allowed_tools, tuple):
+                self._append_sync(Static(Text("Allowed tools were not captured correctly.", style="bold red")))
+                state["step"] = "allowed_tools"
+                self._append_agent_create_prompt()
+                return
+            profile = AgentProfile(
+                name=str(state["name"]),
+                title=str(state["title"]),
+                description=str(state["description"]),
+                allowed_tools=allowed_tools,
+                system_addendum=str(state["system_addendum"]),
+            )
+            err = save_custom_profile(profile)
+            if err:
+                self._append_sync(Static(Text(err, style="bold red")))
+                self._append_agent_create_prompt()
+                return
+            self._pending_agent_create = None
+            self._append_sync(Static(Text.assemble(
+                ("Created agent profile ", "dim"),
+                (profile.name, "bold"),
+                (". Switch with ", "dim"),
+                (f"/agent {profile.name}", "bold yellow"),
+                (".", "dim"),
+            )))
 
     def _handle_sessions_command(self, text: str) -> None:
         parts = text.split()
@@ -560,8 +728,18 @@ class AgentApp(App):
             for line in [
                 "/agent               Show current agent and available profiles",
                 "/agent <name>        Switch to an agent profile",
+                "/agent create [name] Create a custom agent profile",
             ]:
                 self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
+        if arg == "create" or arg.startswith("create "):
+            create_arg = arg[len("create"):].strip()
+            parts = create_arg.split()
+            if len(parts) > 1:
+                self._append_sync(Static(Text("Usage: /agent create [name]", style="dim")))
+                return
+            self._start_agent_create(parts[0] if parts else "")
             return
 
         if not arg:

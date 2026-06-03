@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.agents import (
@@ -5,12 +7,27 @@ from app.agents import (
     DEFAULT_PROFILE,
     PROFILES,
     AgentProfile,
+    _custom_profiles_path,
     get_profile,
     list_profiles,
+    load_custom_profiles,
+    save_custom_profile,
+    validate_allowed_tools,
+    validate_profile_name,
 )
 
 
 COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
+
+
+def _custom_profile(name: str = "reviewer") -> AgentProfile:
+    return AgentProfile(
+        name=name,
+        title="Code Reviewer",
+        description="Reviews changes for correctness and clarity.",
+        allowed_tools=("Read", "Grep"),
+        system_addendum="Review the code and report the most important risks first.",
+    )
 
 
 def test_coach_is_default_profile():
@@ -62,5 +79,108 @@ def test_get_profile_rejects_unknown_profile():
         get_profile("missing")
 
 
-def test_list_profiles_returns_registered_profiles():
+def test_list_profiles_returns_registered_profiles(monkeypatch):
+    monkeypatch.setattr("app.agents.load_custom_profiles", lambda: {})
+
     assert list_profiles() == (PROFILES[COACH_PROFILE],)
+
+
+def test_validate_profile_name_accepts_safe_custom_names():
+    assert validate_profile_name("reviewer") is None
+    assert validate_profile_name("test_agent-1") is None
+
+
+def test_validate_profile_name_rejects_unsafe_or_builtin_names():
+    assert "empty" in validate_profile_name("")
+    assert "lowercase" in validate_profile_name("Reviewer")
+    assert "lowercase" in validate_profile_name("has spaces")
+    assert "built in" in validate_profile_name(COACH_PROFILE)
+
+
+def test_validate_allowed_tools_uses_tool_registry():
+    tools, err = validate_allowed_tools(["Read", "Grep", "Read"])
+
+    assert err is None
+    assert tools == ("Read", "Grep")
+
+
+def test_validate_allowed_tools_rejects_unknown_tools():
+    tools, err = validate_allowed_tools(["Read", "Nope"])
+
+    assert tools is None
+    assert "Unknown tool: Nope" in err
+    assert "Read" in err
+
+
+def test_save_and_load_custom_profile(tmp_path):
+    profile = _custom_profile()
+
+    err = save_custom_profile(profile, tmp_path)
+
+    assert err is None
+    assert load_custom_profiles(tmp_path) == {"reviewer": profile}
+    data = json.loads(_custom_profiles_path(tmp_path).read_text(encoding="utf-8"))
+    assert data["version"] == 1
+    assert data["profiles"][0]["allowed_tools"] == ["Read", "Grep"]
+
+
+def test_save_custom_profile_rejects_builtin_conflicts(tmp_path):
+    profile = AgentProfile(
+        name=COACH_PROFILE,
+        title="Other Coach",
+        description="Attempts to replace the built-in coach.",
+        allowed_tools=("Read",),
+        system_addendum="Do something else.",
+    )
+
+    err = save_custom_profile(profile, tmp_path)
+
+    assert "built in" in err
+    assert not _custom_profiles_path(tmp_path).exists()
+
+
+def test_invalid_custom_profile_data_is_ignored(tmp_path):
+    path = _custom_profiles_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "version": 1,
+        "profiles": [
+            _custom_profile().__dict__,
+            {"name": "bad name"},
+            {
+                "name": COACH_PROFILE,
+                "title": "Fake Coach",
+                "description": "Should not override built-in profiles.",
+                "allowed_tools": ["Read"],
+                "system_addendum": "Ignore the built-in coach.",
+            },
+            {
+                "name": "unknown_tool",
+                "title": "Unknown Tool",
+                "description": "Has a tool that does not exist.",
+                "allowed_tools": ["Nope"],
+                "system_addendum": "Use an unknown tool.",
+            },
+            "not an object",
+        ],
+    }), encoding="utf-8")
+
+    loaded = load_custom_profiles(tmp_path)
+
+    assert loaded == {"reviewer": _custom_profile()}
+
+
+def test_corrupt_custom_profiles_file_is_ignored(tmp_path):
+    path = _custom_profiles_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("not json", encoding="utf-8")
+
+    assert load_custom_profiles(tmp_path) == {}
+
+
+def test_get_and_list_profiles_include_custom_profiles(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert save_custom_profile(_custom_profile()) is None
+
+    assert get_profile("reviewer") == _custom_profile()
+    assert [profile.name for profile in list_profiles()] == ["coach", "reviewer"]
