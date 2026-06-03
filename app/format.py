@@ -15,11 +15,13 @@ def _format_tokens(n: int) -> str:
 
 def format_usage(
     prompt: int, completion: int, cost: float,
-    model: str = "", context_window: int = 0,
+    model: str = "", context_window: int = 0, agent: str = "",
 ) -> str:
     base = f"session: ↑ {prompt:,} · ↓ {completion:,} · ${cost:.4f}"
     if context_window > 0:
         base += f" · ctx {_format_tokens(prompt)}/{_format_tokens(context_window)}"
+    if agent:
+        base += f" · {agent}"
     if model:
         base += f" · {model}"
     return base

@@ -65,6 +65,7 @@ def test_reset_usage_clears_counters_and_updates_bar(monkeypatch):
         0.0,
         "haiku",
         CONTEXT_WINDOWS[MODELS["haiku"]],
+        "coach",
     )
 
 

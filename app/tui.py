@@ -152,7 +152,17 @@ class AgentApp(App):
             yield VerticalScroll(id="chat-log")
             yield TodoPanel(id="todo-panel")
         with Vertical(id="bottom-bar"):
-            yield Static(format_usage(0, 0, 0.0, DEFAULT_MODEL, CONTEXT_WINDOWS.get(MODELS[DEFAULT_MODEL], 0)), id="usage-bar")
+            yield Static(
+                format_usage(
+                    0,
+                    0,
+                    0.0,
+                    DEFAULT_MODEL,
+                    CONTEXT_WINDOWS.get(MODELS[DEFAULT_MODEL], 0),
+                    DEFAULT_PROFILE,
+                ),
+                id="usage-bar",
+            )
             yield Horizontal(
                 Input(placeholder="Type a message...", id="user-input"),
                 id="input-bar",
@@ -220,6 +230,7 @@ class AgentApp(App):
                 self._total_cost,
                 self._model,
                 self._context_window(),
+                self._agent_profile,
             )
         )
 
