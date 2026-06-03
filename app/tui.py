@@ -9,7 +9,7 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
-from .agents import get_profile
+from .agents import DEFAULT_PROFILE, get_profile, list_profiles
 from .config import load_system_prompt
 from .format import format_usage
 from .session import (
@@ -156,11 +156,12 @@ class AgentApp(App):
         self._history_index: int = 0
         self._history_draft: str = ""
         self._model = DEFAULT_MODEL
+        self._agent_profile = DEFAULT_PROFILE
         self._session_name = DEFAULT_SESSION
         self._reset_usage()
         saved = load_session(self._session_name)
         if saved is not None:
-            self._messages: list = _refresh_system_prompt(saved, load_system_prompt())
+            self._messages: list = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
             user_turns = len(self._history)
@@ -174,7 +175,7 @@ class AgentApp(App):
             )))
             self._append_session_transcript(self._messages)
         else:
-            self._messages = [{"role": "system", "content": load_system_prompt()}]
+            self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
 
     def _container(self) -> VerticalScroll:
         return self.query_one("#chat-log", VerticalScroll)
@@ -268,6 +269,7 @@ class AgentApp(App):
                 "/help                          Show this help message",
                 "/clear                         Clear current conversation",
                 "/export [filename]             Export conversation to Markdown",
+                "/agent [name]                  Show or switch the active agent profile",
                 "/model [name]                  Show or switch the active model",
                 "/sessions [list|new|load|delete|rename]  Manage named sessions",
                 "/todo-clear                    Clear the todo panel",
@@ -278,7 +280,7 @@ class AgentApp(App):
             return
 
         if text == "/clear":
-            self._messages = [{"role": "system", "content": load_system_prompt()}]
+            self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
             clear_session(self._session_name)
             self._current_tool_block = None
             self._history.clear()
@@ -313,6 +315,10 @@ class AgentApp(App):
 
         if text.startswith("/sessions"):
             self._handle_sessions_command(text)
+            return
+
+        if text == "/agent" or text.startswith("/agent "):
+            self._handle_agent_command(text)
             return
 
         if text == "/model" or text.startswith("/model "):
@@ -406,7 +412,7 @@ class AgentApp(App):
                 return
             save_session(self._messages, self._session_name)
             self._session_name = arg
-            self._messages = [{"role": "system", "content": load_system_prompt()}]
+            self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
             self._current_tool_block = None
             self._history.clear()
             self._history_index = 0
@@ -428,7 +434,7 @@ class AgentApp(App):
                 return
             save_session(self._messages, self._session_name)
             self._session_name = arg
-            self._messages = _refresh_system_prompt(saved, load_system_prompt())
+            self._messages = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
             self._current_tool_block = None
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
@@ -482,6 +488,58 @@ class AgentApp(App):
             return
 
         self._append_sync(Static(Text("Unknown subcommand. Type /sessions help for usage.", style="dim")))
+
+    def _handle_agent_command(self, text: str) -> None:
+        arg = text[7:].strip()
+
+        if arg == "help":
+            for line in [
+                "/agent               Show current agent and available profiles",
+                "/agent <name>        Switch to an agent profile",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
+        if not arg:
+            current = get_profile(self._agent_profile)
+            self._append_sync(Static(Text.assemble(
+                ("Current agent: ", "dim"),
+                (current.name, "bold"),
+                (f" — {current.title}", "dim"),
+            )))
+            for profile in list_profiles():
+                marker = " ← current" if profile.name == self._agent_profile else ""
+                style = "bold" if profile.name == self._agent_profile else "dim"
+                self._append_sync(Static(Text(
+                    f"  {profile.name}{marker} — {profile.description}",
+                    style=style,
+                )))
+            return
+
+        try:
+            profile = get_profile(arg)
+        except ValueError:
+            options = ", ".join(profile.name for profile in list_profiles())
+            self._append_sync(Static(Text.assemble(
+                (f"Unknown agent: {arg}", "bold red"),
+                (" — available: ", "dim"),
+                (options, "bold"),
+            )))
+            return
+
+        save_session(self._messages, self._session_name)
+        self._agent_profile = profile.name
+        self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+        self._current_tool_block = None
+        self._history.clear()
+        self._history_index = 0
+        self._container().remove_children()
+        self._reset_usage()
+        self._append_sync(Static(Text.assemble(
+            ("Switched to agent ", "dim"),
+            (profile.name, "bold"),
+            (" and started a fresh conversation.", "dim"),
+        )))
 
     def action_interrupt(self) -> None:
         self.workers.cancel_all()
@@ -597,7 +655,7 @@ class AgentApp(App):
                 on_usage,
                 on_tool_confirm,
                 on_todo,
-                tool_allowlist=get_profile().allowed_tools,
+                tool_allowlist=get_profile(self._agent_profile).allowed_tools,
             )
             await flush_buffer()
         except asyncio.CancelledError:
