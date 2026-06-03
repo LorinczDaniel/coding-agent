@@ -9,7 +9,7 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
-from .agents import DEFAULT_PROFILE, get_profile, list_profiles
+from .agents import COACH_PROFILE, DEFAULT_PROFILE, get_profile, list_profiles
 from .config import load_system_prompt
 from .format import format_usage
 from .session import (
@@ -70,6 +70,16 @@ def _refresh_system_prompt(messages: list, system_prompt: str) -> list:
     else:
         refreshed.insert(0, system_message)
     return refreshed
+
+
+def _learn_goal_prompt(goal: str) -> str:
+    return (
+        f"I want to build my own {goal}.\n\n"
+        "Create a CodeCrafters-style learning path for this goal. "
+        "Break it into 5-10 small milestones, then start with task 1 only. "
+        "For task 1, include the expected outcome, a small implementation target, "
+        "and how we will check it. Wait for my attempt before moving to task 2."
+    )
 
 
 class AgentApp(App):
@@ -269,6 +279,7 @@ class AgentApp(App):
                 "/help                          Show this help message",
                 "/clear                         Clear current conversation",
                 "/export [filename]             Export conversation to Markdown",
+                "/learn <thing>                 Start a guided build-your-own lesson",
                 "/agent [name]                  Show or switch the active agent profile",
                 "/model [name]                  Show or switch the active model",
                 "/sessions [list|new|load|delete|rename]  Manage named sessions",
@@ -315,6 +326,10 @@ class AgentApp(App):
 
         if text.startswith("/sessions"):
             self._handle_sessions_command(text)
+            return
+
+        if text == "/learn" or text.startswith("/learn "):
+            self._handle_learn_command(text)
             return
 
         if text == "/agent" or text.startswith("/agent "):
@@ -488,6 +503,44 @@ class AgentApp(App):
             return
 
         self._append_sync(Static(Text("Unknown subcommand. Type /sessions help for usage.", style="dim")))
+
+    def _handle_learn_command(self, text: str) -> None:
+        goal = text[6:].strip()
+
+        if goal == "help":
+            for line in [
+                "/learn <thing>       Start a guided build-your-own lesson",
+                "/learn redis         Build a tiny Redis-like server step by step",
+                "/learn grep          Build a grep-like search tool step by step",
+                "/learn http server   Build an HTTP server step by step",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
+        if not goal:
+            self._append_sync(Static(Text("Usage: /learn <thing>  (try /learn redis or /learn grep)", style="dim")))
+            return
+
+        save_session(self._messages, self._session_name)
+        self._agent_profile = COACH_PROFILE
+        prompt = _learn_goal_prompt(goal)
+        self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+        self._messages.append({"role": "user", "content": prompt})
+        self._current_tool_block = None
+        self._history.clear()
+        self._history.append(prompt)
+        self._history_index = len(self._history)
+        self._history_draft = ""
+        self._container().remove_children()
+        self._reset_usage()
+        self._append_sync(Static(Text.assemble(
+            ("Learning goal: ", "dim"),
+            (goal, "bold"),
+        )))
+        self._append_sync(Static(Text.assemble(("You: ", "bold green"), (prompt, "white"))))
+        self._safe_msg_count = len(self._messages)
+        self.query_one("#user-input", Input).disabled = True
+        self._run_agent()
 
     def _handle_agent_command(self, text: str) -> None:
         arg = text[7:].strip()

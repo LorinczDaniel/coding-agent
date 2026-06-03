@@ -1,6 +1,9 @@
-from app.agents import DEFAULT_PROFILE
+from app.agents import COACH_PROFILE, DEFAULT_PROFILE
 from app.format import format_usage
-from app.tui import AgentApp, CONTEXT_WINDOWS, MODELS, _refresh_system_prompt, _session_transcript
+from app.tui import (
+    AgentApp, CONTEXT_WINDOWS, MODELS,
+    _learn_goal_prompt, _refresh_system_prompt, _session_transcript,
+)
 
 
 class DummyInput:
@@ -152,6 +155,81 @@ def test_help_includes_agent_command(monkeypatch):
     app._send("/help")
 
     assert any("/agent [name]" in _rendered_text(widget) for widget in appended)
+    assert any("/learn <thing>" in _rendered_text(widget) for widget in appended)
+
+
+def test_learn_help_shows_examples(monkeypatch):
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_learn_command("/learn help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "/learn redis" in text
+    assert "/learn grep" in text
+    assert "/learn http server" in text
+
+
+def test_empty_learn_shows_usage(monkeypatch):
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_learn_command("/learn")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Usage: /learn <thing>" in text
+    assert "/learn redis" in text
+
+
+def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
+    app = _make_app()
+    container = DummyContainer()
+    input_widget = DummyInput()
+    appended = []
+    saved = []
+    reset_calls = []
+    run_calls = []
+    app._agent_profile = "other"
+    app._messages = [
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ]
+    app._history = ["old question"]
+    app._history_index = 1
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    app._handle_learn_command("/learn redis")
+
+    prompt = _learn_goal_prompt("redis")
+    assert saved == [([
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ], "default")]
+    assert app._agent_profile == COACH_PROFILE
+    assert app._messages == [
+        {"role": "system", "content": "system coach"},
+        {"role": "user", "content": prompt},
+    ]
+    assert "5-10 small milestones" in prompt
+    assert "task 1" in prompt
+    assert app._history == [prompt]
+    assert app._history_index == 1
+    assert container.removed is True
+    assert reset_calls == [True]
+    assert run_calls == [True]
+    assert input_widget.disabled is True
+    assert any("Learning goal: redis" in _rendered_text(widget) for widget in appended)
 
 
 def test_agent_command_lists_current_and_available(monkeypatch):
