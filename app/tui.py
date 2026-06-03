@@ -9,6 +9,7 @@ from textual import work
 from rich.markup import escape
 from rich.text import Text
 from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
+from .agents import get_profile
 from .config import load_system_prompt
 from .format import format_usage
 from .session import (
@@ -596,6 +597,7 @@ class AgentApp(App):
                 on_usage,
                 on_tool_confirm,
                 on_todo,
+                tool_allowlist=get_profile().allowed_tools,
             )
             await flush_buffer()
         except asyncio.CancelledError:

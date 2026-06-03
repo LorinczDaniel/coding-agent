@@ -2,7 +2,9 @@ import difflib
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 _SKIP_DIRS = {".git", ".venv"}
 MAX_TOOL_OUTPUT_CHARS = 50 * 1024
@@ -409,3 +411,65 @@ def TodoWrite(todos: list[dict]) -> str:
         icon = {"not-started": "○", "in-progress": "●", "completed": "✓"}[item["status"]]
         lines.append(f"{icon} {item['title']}")
     return "Todo list updated:\n" + "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    schema: dict[str, Any]
+    handler: Callable[[dict[str, Any]], str]
+
+
+def _read_handler(args: dict[str, Any]) -> str:
+    return Read(args["file_path"])
+
+
+def _write_handler(args: dict[str, Any]) -> str:
+    return Write(args["file_path"], args["content"])
+
+
+def _edit_handler(args: dict[str, Any]) -> str:
+    return Edit(
+        args["file_path"],
+        args["old_string"],
+        args["new_string"],
+        args.get("replace_all", False),
+    )
+
+
+def _bash_handler(args: dict[str, Any]) -> str:
+    return Bash(args["command"], args.get("timeout", 120))
+
+
+def _glob_handler(args: dict[str, Any]) -> str:
+    return Glob(args["pattern"], args.get("path", "."))
+
+
+def _grep_handler(args: dict[str, Any]) -> str:
+    return Grep(args["pattern"], args.get("path", "."), args.get("include", "*"))
+
+
+def _todo_handler(args: dict[str, Any]) -> str:
+    return TodoWrite(args["todos"])
+
+
+TOOL_REGISTRY: dict[str, ToolDefinition] = {
+    "Read": ToolDefinition(READ_TOOL, _read_handler),
+    "Write": ToolDefinition(WRITE_TOOL, _write_handler),
+    "Edit": ToolDefinition(EDIT_TOOL, _edit_handler),
+    "Bash": ToolDefinition(BASH_TOOL, _bash_handler),
+    "Glob": ToolDefinition(GLOB_TOOL, _glob_handler),
+    "Grep": ToolDefinition(GREP_TOOL, _grep_handler),
+    "TodoWrite": ToolDefinition(TODO_TOOL, _todo_handler),
+}
+
+
+def get_tool_schemas(tool_allowlist: list[str] | tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+    names = TOOL_REGISTRY.keys() if tool_allowlist is None else tool_allowlist
+    return [TOOL_REGISTRY[name].schema for name in names if name in TOOL_REGISTRY]
+
+
+def execute_tool(name: str, args: dict[str, Any]) -> str:
+    definition = TOOL_REGISTRY.get(name)
+    if definition is None:
+        return f"Unknown tool: {name}"
+    return definition.handler(args)
