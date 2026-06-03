@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from .agents import DEFAULT_PROFILE, get_profile
+
 _BASE_PROMPT = """\
 You are a coding assistant running in a terminal. You have access to these tools:
 
@@ -32,16 +34,22 @@ def _detect_project_type(cwd: Path) -> str:
     return "a project"
 
 
-def load_system_prompt() -> str:
+def load_system_prompt(profile_name: str = DEFAULT_PROFILE) -> str:
     cwd = Path.cwd()
     context = f"You are working in `{cwd}`, {_detect_project_type(cwd)}."
-    base = f"{_BASE_PROMPT}\n\n{context}"
+    profile = get_profile(profile_name)
+    parts = [_BASE_PROMPT, context]
 
     custom_path = Path("system.md")
-    if not custom_path.exists():
-        return base
-    try:
-        custom = custom_path.read_text(encoding="utf-8").strip()
-    except OSError as e:
-        raise RuntimeError(f"Could not read system.md: {e}") from e
-    return f"{base}\n\n{custom}"
+    if custom_path.exists():
+        try:
+            custom = custom_path.read_text(encoding="utf-8").strip()
+        except OSError as e:
+            raise RuntimeError(f"Could not read system.md: {e}") from e
+        if custom:
+            parts.append(custom)
+
+    if profile.system_addendum:
+        parts.append(profile.system_addendum.strip())
+
+    return "\n\n".join(parts)

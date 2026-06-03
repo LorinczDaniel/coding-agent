@@ -1,5 +1,5 @@
 from app.format import format_usage
-from app.tui import AgentApp, CONTEXT_WINDOWS, MODELS, _session_transcript
+from app.tui import AgentApp, CONTEXT_WINDOWS, MODELS, _refresh_system_prompt, _session_transcript
 
 
 class DummyInput:
@@ -118,16 +118,41 @@ def test_sessions_load_resets_usage(monkeypatch):
     monkeypatch.setattr(app, "_append_session_transcript", lambda messages: replayed.append(messages))
     monkeypatch.setattr("app.tui.load_session", lambda name: saved)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda: "new coach system")
 
     app._handle_sessions_command("/sessions load saved")
 
     assert reset_calls == [True]
     assert container.removed is True
     assert app._session_name == "saved"
-    assert app._messages == saved
+    assert app._messages == [
+        {"role": "system", "content": "new coach system"},
+        {"role": "user", "content": "hello"},
+    ]
     assert app._history == ["hello"]
     assert app._history_index == 1
-    assert replayed == [saved]
+    assert replayed == [app._messages]
+
+
+def test_refresh_system_prompt_replaces_existing_system_message():
+    messages = [
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "hello"},
+    ]
+
+    assert _refresh_system_prompt(messages, "coach system") == [
+        {"role": "system", "content": "coach system"},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_refresh_system_prompt_inserts_missing_system_message():
+    messages = [{"role": "user", "content": "hello"}]
+
+    assert _refresh_system_prompt(messages, "coach system") == [
+        {"role": "system", "content": "coach system"},
+        {"role": "user", "content": "hello"},
+    ]
 
 
 def test_session_transcript_excludes_system_tools_and_empty_assistant_calls():

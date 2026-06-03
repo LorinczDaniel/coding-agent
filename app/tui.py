@@ -61,6 +61,16 @@ def _session_transcript(messages: list) -> list[tuple[str, str]]:
     return transcript
 
 
+def _refresh_system_prompt(messages: list, system_prompt: str) -> list:
+    refreshed = list(messages)
+    system_message = {"role": "system", "content": system_prompt}
+    if refreshed and isinstance(refreshed[0], dict) and refreshed[0].get("role") == "system":
+        refreshed[0] = system_message
+    else:
+        refreshed.insert(0, system_message)
+    return refreshed
+
+
 class AgentApp(App):
     TITLE = "Agent Daniel"
     BINDINGS = [
@@ -149,7 +159,7 @@ class AgentApp(App):
         self._reset_usage()
         saved = load_session(self._session_name)
         if saved is not None:
-            self._messages: list = saved
+            self._messages: list = _refresh_system_prompt(saved, load_system_prompt())
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
             user_turns = len(self._history)
@@ -161,7 +171,7 @@ class AgentApp(App):
                 ("/clear", "bold yellow"),
                 (" to start fresh.", "dim"),
             )))
-            self._append_session_transcript(saved)
+            self._append_session_transcript(self._messages)
         else:
             self._messages = [{"role": "system", "content": load_system_prompt()}]
 
@@ -417,7 +427,7 @@ class AgentApp(App):
                 return
             save_session(self._messages, self._session_name)
             self._session_name = arg
-            self._messages = saved
+            self._messages = _refresh_system_prompt(saved, load_system_prompt())
             self._current_tool_block = None
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
@@ -429,7 +439,7 @@ class AgentApp(App):
                 (arg, "bold"),
                 (f" ({user_turns} user turn{'s' if user_turns != 1 else ''}).", "dim"),
             )))
-            self._append_session_transcript(saved)
+            self._append_session_transcript(self._messages)
             return
 
         if sub == "delete":
