@@ -1,4 +1,4 @@
-from app.agents import COACH_PROFILE, DEFAULT_PROFILE
+from app.agents import COACH_PROFILE, DEFAULT_PROFILE, AgentProfile, get_profile, save_custom_profile
 from app.format import format_usage
 from app.tui import (
     AgentApp, CONTEXT_WINDOWS, MODELS,
@@ -42,11 +42,22 @@ def _make_app():
     app._history_index = 0
     app._history_draft = ""
     app._pending_confirm = None
+    app._pending_agent_create = None
     app._current_tool_block = None
     app._total_in = 1234
     app._total_out = 567
     app._total_cost = 0.42
     return app
+
+
+def _custom_profile(name: str = "reviewer") -> AgentProfile:
+    return AgentProfile(
+        name=name,
+        title="Code Reviewer",
+        description="Reviews code changes.",
+        allowed_tools=("Read", "Grep"),
+        system_addendum="Review the code and report risks first.",
+    )
 
 
 def test_reset_usage_clears_counters_and_updates_bar(monkeypatch):
@@ -156,6 +167,7 @@ def test_help_includes_agent_command(monkeypatch):
     app._send("/help")
 
     assert any("/agent [name]" in _rendered_text(widget) for widget in appended)
+    assert any("/agent create [name]" in _rendered_text(widget) for widget in appended)
     assert any("/learn <thing>" in _rendered_text(widget) for widget in appended)
 
 
@@ -246,6 +258,21 @@ def test_agent_command_lists_current_and_available(monkeypatch):
     assert any("coach ← current" in text for text in texts)
 
 
+def test_agent_command_lists_custom_profiles(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert save_custom_profile(_custom_profile()) is None
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "reviewer" in text
+    assert "Reviews code changes." in text
+
+
 def test_agent_help_explains_usage(monkeypatch):
     app = _make_app()
     appended = []
@@ -257,6 +284,109 @@ def test_agent_help_explains_usage(monkeypatch):
     texts = [_rendered_text(widget) for widget in appended]
     assert any("/agent" in text and "Show current agent" in text for text in texts)
     assert any("/agent <name>" in text and "Switch" in text for text in texts)
+    assert any("/agent create [name]" in text and "Create" in text for text in texts)
+
+
+def test_agent_create_without_name_prompts_for_name(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_agent_create["step"] == "name"
+    assert "Creating a custom agent profile" in text
+    assert "Profile name" in text
+
+
+def test_agent_create_prefills_name(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create reviewer")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_agent_create["name"] == "reviewer"
+    assert app._pending_agent_create["step"] == "title"
+    assert "Display title" in text
+
+
+def test_agent_create_flow_saves_custom_profile(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    input_widget = DummyInput()
+    appended = []
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/agent create reviewer")
+    app._send("Code Reviewer")
+    app._send("Reviews code changes.")
+    app._send("Read, grep")
+    app._send("Review the code and report risks first.")
+
+    profile = get_profile("reviewer")
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_agent_create is None
+    assert profile.title == "Code Reviewer"
+    assert profile.allowed_tools == ("Read", "Grep")
+    assert "Created agent profile reviewer" in text
+    assert "/agent reviewer" in text
+
+
+def test_agent_create_reprompts_for_invalid_name(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create")
+    app._answer_agent_create("Bad Name")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_agent_create["step"] == "name"
+    assert "must start with a lowercase letter" in text
+    assert text.count("Profile name") == 2
+
+
+def test_agent_create_reprompts_for_invalid_tools(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create reviewer")
+    app._answer_agent_create("Code Reviewer")
+    app._answer_agent_create("Reviews code changes.")
+    app._answer_agent_create("Read Nope")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_agent_create["step"] == "allowed_tools"
+    assert "Unknown tool: Nope" in text
+    assert "Available tools" in text
+
+
+def test_agent_create_can_be_cancelled(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create reviewer")
+    app._answer_agent_create("cancel")
+
+    assert app._pending_agent_create is None
+    assert any("cancelled" in _rendered_text(widget) for widget in appended)
 
 
 def test_agent_unknown_profile_shows_available_options(monkeypatch):
@@ -305,6 +435,49 @@ def test_agent_switch_saves_and_starts_fresh(monkeypatch):
     assert container.removed is True
     assert reset_calls == [True]
     assert any("Switched to agent coach" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert save_custom_profile(_custom_profile()) is None
+    app = _make_app()
+    container = DummyContainer()
+    usage_bar = DummyUsageBar()
+    appended = []
+    saved = []
+    app._messages = [
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ]
+    app._history = ["old question"]
+    app._history_index = 1
+
+    monkeypatch.setattr(app, "query_one", lambda *args: usage_bar)
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    app._handle_agent_command("/agent reviewer")
+
+    assert saved == [([
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ], "default")]
+    assert app._agent_profile == "reviewer"
+    assert app._messages == [{"role": "system", "content": "system reviewer"}]
+    assert app._history == []
+    assert app._history_index == 0
+    assert container.removed is True
+    assert usage_bar.value == format_usage(
+        0,
+        0,
+        0.0,
+        "haiku",
+        CONTEXT_WINDOWS[MODELS["haiku"]],
+        "reviewer",
+    )
+    assert any("Switched to agent reviewer" in _rendered_text(widget) for widget in appended)
 
 
 def test_refresh_system_prompt_replaces_existing_system_message():
