@@ -5,10 +5,7 @@ from typing import Awaitable, Callable
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from .permissions import requires_confirmation
-from .tools import (
-    Bash, Edit, Glob, Grep, Read, Write, TodoWrite,
-    BASH_TOOL, EDIT_TOOL, GLOB_TOOL, GREP_TOOL, READ_TOOL, WRITE_TOOL, TODO_TOOL,
-)
+from .tools import execute_tool, get_tool_schemas
 
 DENIED_RESULT = (
     "Error: user denied this tool call. "
@@ -40,6 +37,7 @@ async def run_agent(
     on_usage: Callable[[int, int, float], None] | None = None,
     on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None = None,
     on_todo: Callable[[list[dict]], Awaitable[None]] | None = None,
+    tool_allowlist: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     if not API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -54,7 +52,7 @@ async def run_agent(
         stream = await client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=[READ_TOOL, WRITE_TOOL, EDIT_TOOL, BASH_TOOL, GLOB_TOOL, GREP_TOOL, TODO_TOOL],
+            tools=get_tool_schemas(tool_allowlist),
             stream=True,
             stream_options={"include_usage": True},
             extra_body={"usage": {"include": True}},
@@ -122,31 +120,11 @@ async def run_agent(
             if not approved:
                 return DENIED_RESULT
             name = tc["name"]
-            if name == "Read":
-                return await asyncio.to_thread(Read, args["file_path"])
-            if name == "Write":
-                return await asyncio.to_thread(Write, args["file_path"], args["content"])
-            if name == "Edit":
-                return await asyncio.to_thread(
-                    Edit, args["file_path"], args["old_string"],
-                    args["new_string"], args.get("replace_all", False),
-                )
-            if name == "Bash":
-                return await asyncio.to_thread(
-                    Bash, args["command"], args.get("timeout", 120),
-                )
-            if name == "Glob":
-                return await asyncio.to_thread(Glob, args["pattern"], args.get("path", "."))
-            if name == "Grep":
-                return await asyncio.to_thread(
-                    Grep, args["pattern"], args.get("path", "."), args.get("include", "*"),
-                )
+            result = await asyncio.to_thread(execute_tool, name, args)
             if name == "TodoWrite":
-                result = TodoWrite(args["todos"])
                 if on_todo is not None and not result.startswith("Error"):
                     await on_todo(args["todos"])
-                return result
-            return f"Unknown tool: {name}"
+            return result
 
         results = await asyncio.gather(*(_exec(tc, args, ok) for tc, args, ok in prepared))
 

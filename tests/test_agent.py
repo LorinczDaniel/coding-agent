@@ -142,7 +142,7 @@ async def test_parallel_execution_is_concurrent(tmp_path, callbacks):
 
     with patch("app.agent.API_KEY", "test-key"), \
          patch("app.agent.AsyncOpenAI") as mock_cls, \
-         patch("app.agent.Read", side_effect=slow_read):
+            patch("app.tools.Read", side_effect=slow_read):
         mock_client = AsyncMock()
         mock_client.chat.completions.create = fake_create
         mock_cls.return_value = mock_client
@@ -153,6 +153,63 @@ async def test_parallel_execution_is_concurrent(tmp_path, callbacks):
 
     # 3 x 0.15s sequential = 0.45s; parallel should be ~0.15s
     assert elapsed < 0.35, f"Expected parallel execution, took {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_tool_allowlist_filters_openrouter_schemas(callbacks):
+    """Only allowlisted tool schemas are sent to OpenRouter."""
+    chunks = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    tool_names = []
+
+    async def fake_create(**kwargs):
+        tool_names.append([tool["function"]["name"] for tool in kwargs["tools"]])
+        return _make_stream(chunks)
+
+    messages = [{"role": "user", "content": "hi"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(
+            messages,
+            "test-model",
+            **callbacks,
+            tool_allowlist=["Read", "Bash"],
+        )
+
+    assert tool_names == [["Read", "Bash"]]
+
+
+@pytest.mark.asyncio
+async def test_default_tool_schemas_include_all_existing_tools(callbacks):
+    """Without an allowlist, all built-in tool schemas are sent."""
+    chunks = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    tool_names = []
+
+    async def fake_create(**kwargs):
+        tool_names.append([tool["function"]["name"] for tool in kwargs["tools"]])
+        return _make_stream(chunks)
+
+    messages = [{"role": "user", "content": "hi"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    assert tool_names == [["Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"]]
 
 
 @pytest.mark.asyncio
