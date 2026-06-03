@@ -107,12 +107,31 @@ def test_format_usage_with_model_sonnet():
     assert format_usage(100, 50, 0.05, "sonnet") == "session: ↑ 100 · ↓ 50 · $0.0500 · sonnet"
 
 
+def test_format_usage_with_agent_and_model():
+    assert format_usage(
+        100, 50, 0.01,
+        "haiku", 0, "coach",
+    ) == "session: ↑ 100 · ↓ 50 · $0.0100 · coach · haiku"
+
+
+def test_format_usage_without_agent_label_keeps_existing_model_format():
+    assert format_usage(
+        100, 50, 0.01,
+        "haiku", 0, "",
+    ) == "session: ↑ 100 · ↓ 50 · $0.0100 · haiku"
+
+
 # --- format_usage with context window ---
 
 def test_format_usage_with_context_window():
     result = format_usage(12400, 3100, 0.042, "haiku", 200_000)
     assert "ctx 12.4k/200.0k" in result
     assert result.endswith("· haiku")
+
+
+def test_format_usage_with_context_agent_and_model():
+    result = format_usage(12400, 3100, 0.042, "haiku", 200_000, "coach")
+    assert result == "session: ↑ 12,400 · ↓ 3,100 · $0.0420 · ctx 12.4k/200.0k · coach · haiku"
 
 
 def test_format_usage_context_window_millions():
