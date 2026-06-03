@@ -36,6 +36,7 @@ def test_load_system_prompt_rejects_unknown_profile(tmp_path, monkeypatch):
 
 def test_load_system_prompt_includes_custom_profile_addendum(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "system.md").write_text("Project rules.", encoding="utf-8")
     profile = AgentProfile(
         name="reviewer",
         title="Code Reviewer",
@@ -49,7 +50,9 @@ def test_load_system_prompt_includes_custom_profile_addendum(tmp_path, monkeypat
 
     assert result.startswith(_BASE_PROMPT)
     assert str(tmp_path) in result
+    assert result.index("Project rules.") < result.index(profile.system_addendum)
     assert result.endswith(profile.system_addendum)
+    assert COACH_SYSTEM_ADDENDUM.strip() not in result
 
 
 def test_unreadable_system_md_raises(tmp_path, monkeypatch):

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
+from app.agents import COACH_ALLOWED_TOOLS
 from app.agent import run_agent, DENIED_RESULT
 
 
@@ -210,6 +211,36 @@ async def test_default_tool_schemas_include_all_existing_tools(callbacks):
         await run_agent(messages, "test-model", **callbacks)
 
     assert tool_names == [["Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"]]
+
+
+@pytest.mark.asyncio
+async def test_coach_tool_allowlist_is_sent_to_openrouter(callbacks):
+    chunks = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    tool_names = []
+
+    async def fake_create(**kwargs):
+        tool_names.append([tool["function"]["name"] for tool in kwargs["tools"]])
+        return _make_stream(chunks)
+
+    messages = [{"role": "user", "content": "hi"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(
+            messages,
+            "test-model",
+            **callbacks,
+            tool_allowlist=COACH_ALLOWED_TOOLS,
+        )
+
+    assert tool_names == [list(COACH_ALLOWED_TOOLS)]
 
 
 @pytest.mark.asyncio
