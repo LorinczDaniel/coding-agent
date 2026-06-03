@@ -1,3 +1,4 @@
+from app.agents import DEFAULT_PROFILE
 from app.format import format_usage
 from app.tui import AgentApp, CONTEXT_WINDOWS, MODELS, _refresh_system_prompt, _session_transcript
 
@@ -23,9 +24,15 @@ class DummyUsageBar:
         self.value = value
 
 
+def _rendered_text(widget) -> str:
+    renderable = getattr(widget, "content", "")
+    return renderable.plain if hasattr(renderable, "plain") else str(renderable)
+
+
 def _make_app():
     app = AgentApp()
     app._model = "haiku"
+    app._agent_profile = DEFAULT_PROFILE
     app._session_name = "default"
     app._messages = [{"role": "system", "content": "sys"}]
     app._history = []
@@ -69,13 +76,13 @@ def test_clear_resets_usage(monkeypatch):
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
     monkeypatch.setattr("app.tui.clear_session", lambda name: None)
-    monkeypatch.setattr("app.tui.load_system_prompt", lambda: "new system")
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"new system {profile_name}")
 
     app._send("/clear")
 
     assert reset_calls == [True]
     assert container.removed is True
-    assert app._messages == [{"role": "system", "content": "new system"}]
+    assert app._messages == [{"role": "system", "content": "new system coach"}]
     assert app._history == []
     assert app._history_index == 0
 
@@ -90,14 +97,14 @@ def test_sessions_new_resets_usage(monkeypatch):
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
     monkeypatch.setattr("app.tui.load_session", lambda name: None)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
-    monkeypatch.setattr("app.tui.load_system_prompt", lambda: "new system")
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"new system {profile_name}")
 
     app._handle_sessions_command("/sessions new fresh")
 
     assert reset_calls == [True]
     assert container.removed is True
     assert app._session_name == "fresh"
-    assert app._messages == [{"role": "system", "content": "new system"}]
+    assert app._messages == [{"role": "system", "content": "new system coach"}]
     assert app._history == []
     assert app._history_index == 0
 
@@ -118,7 +125,7 @@ def test_sessions_load_resets_usage(monkeypatch):
     monkeypatch.setattr(app, "_append_session_transcript", lambda messages: replayed.append(messages))
     monkeypatch.setattr("app.tui.load_session", lambda name: saved)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
-    monkeypatch.setattr("app.tui.load_system_prompt", lambda: "new coach system")
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"new {profile_name} system")
 
     app._handle_sessions_command("/sessions load saved")
 
@@ -132,6 +139,93 @@ def test_sessions_load_resets_usage(monkeypatch):
     assert app._history == ["hello"]
     assert app._history_index == 1
     assert replayed == [app._messages]
+
+
+def test_help_includes_agent_command(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    appended = []
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/help")
+
+    assert any("/agent [name]" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_command_lists_current_and_available(monkeypatch):
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent")
+
+    texts = [_rendered_text(widget) for widget in appended]
+    assert any("Current agent: coach" in text for text in texts)
+    assert any("coach ← current" in text for text in texts)
+
+
+def test_agent_help_explains_usage(monkeypatch):
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent help")
+
+    texts = [_rendered_text(widget) for widget in appended]
+    assert any("/agent" in text and "Show current agent" in text for text in texts)
+    assert any("/agent <name>" in text and "Switch" in text for text in texts)
+
+
+def test_agent_unknown_profile_shows_available_options(monkeypatch):
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent missing")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown agent: missing" in text
+    assert "available:" in text
+    assert "coach" in text
+
+
+def test_agent_switch_saves_and_starts_fresh(monkeypatch):
+    app = _make_app()
+    container = DummyContainer()
+    appended = []
+    saved = []
+    reset_calls = []
+    app._messages = [
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ]
+    app._history = ["old question"]
+    app._history_index = 1
+
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    app._handle_agent_command("/agent coach")
+
+    assert saved == [([
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "old question"},
+    ], "default")]
+    assert app._agent_profile == "coach"
+    assert app._messages == [{"role": "system", "content": "system coach"}]
+    assert app._history == []
+    assert app._history_index == 0
+    assert container.removed is True
+    assert reset_calls == [True]
+    assert any("Switched to agent coach" in _rendered_text(widget) for widget in appended)
 
 
 def test_refresh_system_prompt_replaces_existing_system_message():
