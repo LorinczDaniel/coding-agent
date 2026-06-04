@@ -50,6 +50,8 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Markdown export** — `/export [filename]` writes the current user/agent conversation to a Markdown file for documentation or sharing, excluding raw tool calls and tool output.
 - **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart.
 - **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
+- **Agent profiles** — the agent runs under a named *profile* that sets its persona and which tools it may use. The built-in **Coach** profile (the default) is a CodeCrafters-style learning coach. Switch profiles with `/agent <name>`, or define your own with `/agent create`. Each profile keeps its own conversation, so switching starts a fresh thread.
+- **Guided learning (`/learn`)** — `/learn <thing>` kicks off a build-your-own-X lesson under the Coach profile. The Coach turns your goal into 5–10 small milestones, hands you one task at a time, inspects your code and command output, and offers graduated hints (question → nudge → focused example → near-solution) so you stay in control of the build.
 - **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, the agent pauses and asks for approval inline in the conversation. Type `y` to approve or `n` to deny in the normal input box — denying tells the model "user denied this; do not retry" so it adapts instead of looping. (`Esc` still interrupts the whole turn.)
 
 ### Commands
@@ -61,6 +63,10 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/export [filename]` | Export the current conversation to Markdown |
 | `/model` | Show current model and available options |
 | `/model <name>` | Switch to a different model (e.g. `haiku`, `sonnet`) |
+| `/agent` | Show the current agent profile and available profiles |
+| `/agent <name>` | Switch to an agent profile (starts a fresh conversation) |
+| `/agent create [name]` | Create a custom agent profile interactively |
+| `/learn <thing>` | Start a guided build-your-own lesson with the Coach (e.g. `/learn grep`) |
 | `/sessions` | List all sessions for this directory |
 | `/sessions new <name>` | Create and switch to a new named session |
 | `/sessions load <name>` | Switch to an existing session |
@@ -173,6 +179,21 @@ Run the tests and tell me if anything is failing
 Find all TODO comments in the codebase, then create a TODO.md that lists them by file
 ```
 
+**Start a guided lesson**
+```
+/learn grep
+```
+
+**Build your own Redis**
+```
+/learn redis
+```
+
+**Ask the Coach for a hint**
+```
+I'm stuck on parsing the RESP protocol — can you give me a hint?
+```
+
 ---
 
 ## Configuration
@@ -206,6 +227,43 @@ Any OpenAI-compatible model available on OpenRouter will work.
 
 ---
 
+## Agents & the Coach workflow
+
+Every conversation runs under an **agent profile** — a named persona plus the set of tools that persona is allowed to use. Switching profiles starts a fresh conversation, so each profile keeps its own thread.
+
+Use `/agent` to inspect and switch profiles:
+
+```
+/agent                 # show the current profile and all available profiles
+/agent <name>          # switch to a profile (fresh conversation)
+/agent create [name]   # define a custom profile interactively
+```
+
+### The Coach
+
+**Coach** is the built-in default profile — a CodeCrafters-style learning agent. Instead of just doing the work for you, it turns a build goal into a curriculum:
+
+- Breaks your goal into 5–10 small milestones with observable outcomes
+- Hands you **one task at a time** and waits for your attempt
+- Inspects your code, tests, and command output before judging progress
+- Gives **graduated hints** — a question first, then a nudge, then a focused example, and only a near-solution if you ask after struggling
+
+The Coach is **not** read-only: it can use `Read`, `Glob`, `Grep`, `Bash`, `Write`, `Edit`, and `TodoWrite`. It will create or edit files and run shell commands when that helps you move forward, and it explains what it changed and why in teaching language. It deliberately avoids dumping a complete solution unless you explicitly ask for one after working through the problem.
+
+### Starting a lesson with `/learn`
+
+`/learn <thing>` switches to the Coach and seeds a build-your-own lesson for that goal:
+
+```
+/learn grep         # build a grep-like search tool step by step
+/learn redis        # build a tiny Redis-like server step by step
+/learn http server  # build an HTTP server step by step
+```
+
+Once a lesson is running, just talk to the Coach normally. Submit your attempt, paste an error, or ask for help — for example, `I'm stuck on parsing the RESP protocol — can you give me a hint?` — and the Coach responds with the next-strongest hint rather than the full answer.
+
+---
+
 ## Project structure
 
 ```
@@ -215,6 +273,7 @@ app/
   agent.py     # async agent loop, OpenRouter streaming, tool dispatch
   tools.py     # Read, Write, Edit, Bash, Glob, Grep implementations + tool schemas
   config.py    # system prompt + working-directory / project-type injection
+  agents.py    # agent profiles (Coach + custom), allowed-tool validation, profile store
   session.py   # save/load/clear sessions and export conversations to Markdown
   format.py    # UI-agnostic formatting helpers (usage / cost line)
   permissions.py    # risky-pattern detection, auto-allow config, .agent_config.json loader
