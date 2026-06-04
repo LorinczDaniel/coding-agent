@@ -1,11 +1,47 @@
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_SESSION = "default"
 
 _VALID_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+@dataclass(frozen=True)
+class LessonState:
+    """Persisted state of an active Coach lesson."""
+
+    goal: str
+    milestones: tuple[str, ...] = ()
+    current_index: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "goal": self.goal,
+            "milestones": list(self.milestones),
+            "current_index": self.current_index,
+        }
+
+    @classmethod
+    def from_dict(cls, data) -> "LessonState | None":
+        if not isinstance(data, dict):
+            return None
+        goal = data.get("goal")
+        if not isinstance(goal, str) or not goal.strip():
+            return None
+
+        raw_milestones = data.get("milestones", [])
+        if not isinstance(raw_milestones, list):
+            return None
+        milestones = tuple(m for m in raw_milestones if isinstance(m, str))
+
+        current_index = data.get("current_index", 0)
+        if not isinstance(current_index, int) or isinstance(current_index, bool) or current_index < 0:
+            current_index = 0
+
+        return cls(goal=goal.strip(), milestones=milestones, current_index=current_index)
 
 
 def _sessions_dir(cwd: Path | None = None) -> Path:
@@ -16,6 +52,11 @@ def _sessions_dir(cwd: Path | None = None) -> Path:
 
 def _session_path(name: str, cwd: Path | None = None) -> Path:
     return _sessions_dir(cwd) / f"{name}.json"
+
+
+def _lesson_path(name: str, cwd: Path | None = None) -> Path:
+    return _sessions_dir(cwd) / f"{name}.lesson.json"
+
 
 
 def _validate_name(name: str) -> str | None:
@@ -50,6 +91,31 @@ def load_session(name: str = DEFAULT_SESSION) -> list | None:
 
 def clear_session(name: str = DEFAULT_SESSION) -> None:
     _session_path(name).unlink(missing_ok=True)
+    _lesson_path(name).unlink(missing_ok=True)
+
+
+def save_lesson(state: LessonState, name: str = DEFAULT_SESSION) -> None:
+    path = _lesson_path(name)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_lesson(name: str = DEFAULT_SESSION) -> LessonState | None:
+    path = _lesson_path(name)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return LessonState.from_dict(data)
+
+
+def clear_lesson(name: str = DEFAULT_SESSION) -> None:
+    _lesson_path(name).unlink(missing_ok=True)
 
 
 def rename_session(old_name: str, new_name: str) -> str | None:
@@ -73,6 +139,13 @@ def rename_session(old_name: str, new_name: str) -> str | None:
         old_path.rename(new_path)
     except OSError as exc:
         return f"Could not rename session: {exc}"
+
+    old_lesson = _lesson_path(old_name)
+    if old_lesson.exists():
+        try:
+            old_lesson.rename(_lesson_path(new_name))
+        except OSError:
+            pass
     return None
 
 
@@ -80,7 +153,7 @@ def list_sessions() -> list[str]:
     d = _sessions_dir()
     if not d.exists():
         return []
-    return sorted(p.stem for p in d.glob("*.json"))
+    return sorted(p.stem for p in d.glob("*.json") if not p.name.endswith(".lesson.json"))
 
 
 def _message_content_to_text(content) -> str:

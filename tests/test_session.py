@@ -11,6 +11,10 @@ from app.session import (
     list_sessions,
     conversation_to_markdown,
     export_conversation,
+    save_lesson,
+    load_lesson,
+    clear_lesson,
+    LessonState,
     DEFAULT_SESSION,
 )
 
@@ -166,6 +170,82 @@ def test_rename_session_same_name(tmp_path, monkeypatch):
     err = rename_session("same", "same")
     assert err == "New session name must be different."
     assert load_session("same") is not None
+
+
+def test_save_and_load_lesson(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    state = LessonState(goal="redis", milestones=("parse RESP", "store keys"), current_index=1)
+
+    save_lesson(state, "lesson-sess")
+
+    assert (tmp_path / "lesson-sess.lesson.json").exists()
+    assert load_lesson("lesson-sess") == state
+
+
+def test_load_lesson_missing_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    assert load_lesson("nope") is None
+
+
+def test_load_lesson_corrupt_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    (tmp_path / "broken.lesson.json").write_text("{not json", encoding="utf-8")
+    assert load_lesson("broken") is None
+
+
+def test_load_lesson_rejects_missing_goal(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    (tmp_path / "bad.lesson.json").write_text(json.dumps({"milestones": []}), encoding="utf-8")
+    assert load_lesson("bad") is None
+
+
+def test_lesson_state_defaults():
+    state = LessonState(goal="grep")
+    assert state.milestones == ()
+    assert state.current_index == 0
+    assert LessonState.from_dict(state.to_dict()) == state
+
+
+def test_clear_lesson_removes_only_lesson(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "live")
+    save_lesson(LessonState(goal="grep"), "live")
+
+    clear_lesson("live")
+
+    assert load_lesson("live") is None
+    assert load_session("live") is not None
+
+
+def test_clear_session_also_clears_lesson(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "live")
+    save_lesson(LessonState(goal="grep"), "live")
+
+    clear_session("live")
+
+    assert load_lesson("live") is None
+    assert load_session("live") is None
+
+
+def test_lesson_sidecar_excluded_from_list_sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "live")
+    save_lesson(LessonState(goal="grep"), "live")
+
+    assert list_sessions() == ["live"]
+
+
+def test_rename_session_moves_lesson(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "old")
+    save_lesson(LessonState(goal="grep", current_index=2), "old")
+
+    err = rename_session("old", "new")
+
+    assert err is None
+    assert load_lesson("old") is None
+    assert load_lesson("new") == LessonState(goal="grep", current_index=2)
 
 
 def test_conversation_to_markdown_filters_tools_and_system():
