@@ -5,6 +5,7 @@ import pytest
 from app.agents import (
     COACH_PROFILE,
     DEFAULT_PROFILE,
+    MENTOR_PROFILE,
     PROFILES,
     AgentProfile,
     _custom_profiles_path,
@@ -18,6 +19,7 @@ from app.agents import (
 
 
 COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
+MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite"}
 
 
 def _custom_profile(name: str = "reviewer") -> AgentProfile:
@@ -74,6 +76,20 @@ def test_get_profile_returns_default_coach():
     assert get_profile() is PROFILES[COACH_PROFILE]
 
 
+def test_mentor_profile_is_registered_and_read_only():
+    profile = PROFILES[MENTOR_PROFILE]
+
+    assert isinstance(profile, AgentProfile)
+    assert profile.name == "mentor"
+    assert set(profile.allowed_tools) == MENTOR_TOOL_SET
+    assert not {"Write", "Edit", "Bash"} & set(profile.allowed_tools)
+    assert profile.system_addendum
+
+
+def test_get_profile_returns_mentor_by_name():
+    assert get_profile(MENTOR_PROFILE) is PROFILES[MENTOR_PROFILE]
+
+
 def test_get_profile_rejects_unknown_profile():
     with pytest.raises(ValueError, match="Unknown agent profile: missing"):
         get_profile("missing")
@@ -82,7 +98,7 @@ def test_get_profile_rejects_unknown_profile():
 def test_list_profiles_returns_registered_profiles(monkeypatch):
     monkeypatch.setattr("app.agents.load_custom_profiles", lambda: {})
 
-    assert list_profiles() == (PROFILES[COACH_PROFILE],)
+    assert list_profiles() == (PROFILES[COACH_PROFILE], PROFILES[MENTOR_PROFILE])
 
 
 def test_validate_profile_name_accepts_safe_custom_names():
@@ -183,4 +199,4 @@ def test_get_and_list_profiles_include_custom_profiles(tmp_path, monkeypatch):
     assert save_custom_profile(_custom_profile()) is None
 
     assert get_profile("reviewer") == _custom_profile()
-    assert [profile.name for profile in list_profiles()] == ["coach", "reviewer"]
+    assert [profile.name for profile in list_profiles()] == ["coach", "mentor", "reviewer"]
