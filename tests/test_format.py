@@ -121,6 +121,13 @@ def test_format_usage_without_agent_label_keeps_existing_model_format():
     ) == "session: ↑ 100 · ↓ 50 · $0.0100 · haiku"
 
 
+def test_format_usage_with_agent_without_model():
+    assert format_usage(
+        100, 50, 0.01,
+        "", 0, "coach",
+    ) == "session: ↑ 100 · ↓ 50 · $0.0100 · coach"
+
+
 # --- format_usage with context window ---
 
 def test_format_usage_with_context_window():

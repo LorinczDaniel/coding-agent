@@ -10,6 +10,9 @@ class DummyInput:
     def __init__(self):
         self.value = ""
 
+    def focus(self):
+        pass
+
 
 class DummyContainer:
     def __init__(self):
@@ -100,6 +103,34 @@ def test_clear_resets_usage(monkeypatch):
     assert app._messages == [{"role": "system", "content": "new system coach"}]
     assert app._history == []
     assert app._history_index == 0
+
+
+def test_model_switch_updates_usage_bar_and_keeps_agent_label(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    usage_bar = DummyUsageBar()
+    appended = []
+
+    def query_one(selector, *args):
+        if selector == "#usage-bar":
+            return usage_bar
+        return input_widget
+
+    monkeypatch.setattr(app, "query_one", query_one)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/model sonnet")
+
+    assert app._model == "sonnet"
+    assert usage_bar.value == format_usage(
+        1234,
+        567,
+        0.42,
+        "sonnet",
+        CONTEXT_WINDOWS[MODELS["sonnet"]],
+        "coach",
+    )
+    assert any("Switched to sonnet" in _rendered_text(widget) for widget in appended)
 
 
 def test_sessions_new_resets_usage(monkeypatch):
@@ -478,6 +509,29 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
         "reviewer",
     )
     assert any("Switched to agent reviewer" in _rendered_text(widget) for widget in appended)
+
+
+async def test_run_agent_uses_active_profile_tool_allowlist(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert save_custom_profile(_custom_profile()) is None
+    app = _make_app()
+    input_widget = DummyInput()
+    captured = []
+    saved = []
+    app._agent_profile = "reviewer"
+
+    async def fake_run_agent(*args, **kwargs):
+        captured.append(kwargs["tool_allowlist"])
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+
+    await AgentApp._run_agent.__wrapped__(app)
+
+    assert captured == [("Read", "Grep")]
+    assert saved == [(app._messages, "default")]
 
 
 def test_refresh_system_prompt_replaces_existing_system_message():
