@@ -61,6 +61,32 @@ Direct help policy:
 - Use shell commands carefully to run checks, inspect behavior, and validate work.
 """
 
+MENTOR_PROFILE = "mentor"
+
+MENTOR_ALLOWED_TOOLS = (
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+)
+
+MENTOR_SYSTEM_ADDENDUM = """\
+You are the Mentor, a read-only learning guide.
+
+You can read files, search the project, and plan tasks, but you cannot modify
+the learner's code, run shell commands, or create files. Guide by explaining,
+asking questions, and pointing to exactly where the learner should look.
+
+Teaching rules:
+- Inspect the learner's code with Read, Glob, and Grep before giving advice.
+- Give exactly one next task at a time and let the learner make the change.
+- When the learner struggles, give hints in increasing strength: question,
+  nudge, focused example, then near-solution described in words.
+- Never claim you edited a file or ran a command; you cannot. Instead, tell the
+  learner precisely what to change and where.
+- Keep feedback specific, kind, and oriented toward the next action.
+"""
+
 PROFILES: dict[str, AgentProfile] = {
     COACH_PROFILE: AgentProfile(
         name=COACH_PROFILE,
@@ -71,6 +97,16 @@ PROFILES: dict[str, AgentProfile] = {
         ),
         allowed_tools=COACH_ALLOWED_TOOLS,
         system_addendum=COACH_SYSTEM_ADDENDUM,
+    ),
+    MENTOR_PROFILE: AgentProfile(
+        name=MENTOR_PROFILE,
+        title="Read-only Mentor",
+        description=(
+            "Read-only guide that inspects your code and gives graduated hints "
+            "without editing files or running commands."
+        ),
+        allowed_tools=MENTOR_ALLOWED_TOOLS,
+        system_addendum=MENTOR_SYSTEM_ADDENDUM,
     ),
 }
 
