@@ -24,6 +24,7 @@ from .config import load_system_prompt
 from .format import format_usage
 from .session import (
     clear_session, load_session, save_session, list_sessions,
+    clear_lesson, load_lesson, save_lesson, LessonState,
     DEFAULT_SESSION, _validate_name, export_conversation, rename_session,
 )
 from .widgets import ToolBlock, TodoPanel, build_tool_body
@@ -189,9 +190,13 @@ class AgentApp(App):
         self._model = DEFAULT_MODEL
         self._agent_profile = DEFAULT_PROFILE
         self._session_name = DEFAULT_SESSION
+        self._lesson: LessonState | None = None
         self._reset_usage()
         saved = load_session(self._session_name)
         if saved is not None:
+            self._lesson = load_lesson(self._session_name)
+            if self._lesson is not None:
+                self._agent_profile = COACH_PROFILE
             self._messages: list = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
@@ -204,6 +209,11 @@ class AgentApp(App):
                 ("/clear", "bold yellow"),
                 (" to start fresh.", "dim"),
             )))
+            if self._lesson is not None:
+                self._append_sync(Static(Text.assemble(
+                    ("Resumed lesson: ", "dim"),
+                    (self._lesson.goal, "bold"),
+                )))
             self._append_session_transcript(self._messages)
         else:
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
@@ -320,6 +330,7 @@ class AgentApp(App):
         if text == "/clear":
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
             clear_session(self._session_name)
+            self._lesson = None
             self._current_tool_block = None
             self._history.clear()
             self._history_index = 0
@@ -705,6 +716,8 @@ class AgentApp(App):
         prompt = _learn_goal_prompt(goal)
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
         self._messages.append({"role": "user", "content": prompt})
+        self._lesson = LessonState(goal=goal)
+        save_lesson(self._lesson, self._session_name)
         self._current_tool_block = None
         self._history.clear()
         self._history.append(prompt)
