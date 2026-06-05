@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 DEFAULT_SESSION = "default"
@@ -16,12 +16,14 @@ class LessonState:
     goal: str
     milestones: tuple[str, ...] = ()
     current_index: int = 0
+    hint_level: int = 0
 
     def to_dict(self) -> dict:
         return {
             "goal": self.goal,
             "milestones": list(self.milestones),
             "current_index": self.current_index,
+            "hint_level": self.hint_level,
         }
 
     @classmethod
@@ -41,7 +43,24 @@ class LessonState:
         if not isinstance(current_index, int) or isinstance(current_index, bool) or current_index < 0:
             current_index = 0
 
-        return cls(goal=goal.strip(), milestones=milestones, current_index=current_index)
+        hint_level = data.get("hint_level", 0)
+        if not isinstance(hint_level, int) or isinstance(hint_level, bool) or hint_level < 0:
+            hint_level = 0
+
+        return cls(
+            goal=goal.strip(),
+            milestones=milestones,
+            current_index=current_index,
+            hint_level=hint_level,
+        )
+
+    def escalated(self, max_level: int) -> "LessonState":
+        """Return a copy with the hint level bumped by one, clamped at max_level."""
+        return replace(self, hint_level=min(self.hint_level + 1, max_level))
+
+    def with_task(self, index: int) -> "LessonState":
+        """Return a copy advanced to a task, resetting the hint level."""
+        return replace(self, current_index=index, hint_level=0)
 
 
 def _sessions_dir(cwd: Path | None = None) -> Path:

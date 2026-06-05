@@ -3,7 +3,9 @@ from app.format import format_usage
 from app.tui import (
     AgentApp, CONTEXT_WINDOWS, MODELS,
     _learn_goal_prompt, _refresh_system_prompt, _session_transcript,
+    HINT_LEVELS, MAX_HINT_LEVEL, _hint_prompt,
 )
+from app.session import LessonState
 
 
 class DummyInput:
@@ -274,6 +276,112 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     assert run_calls == [True]
     assert input_widget.disabled is True
     assert any("Learning goal: redis" in _rendered_text(widget) for widget in appended)
+
+
+def test_hint_help_shows_ladder(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_hint_command("/hint help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "question" in text
+    assert "nudge" in text
+    assert "focused example" in text
+    assert "near-solution" in text
+    assert "resets" in text
+
+
+def test_hint_without_lesson_prompts_to_learn(monkeypatch):
+    app = _make_app()
+    app._lesson = None
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+
+    app._handle_hint_command("/hint")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "No active lesson" in text
+    assert run_calls == []
+
+
+def test_hint_with_extra_arg_shows_usage(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="redis")
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+
+    app._handle_hint_command("/hint please")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Usage: /hint" in text
+    assert run_calls == []
+
+
+def test_hint_escalates_level_and_runs_agent(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="redis")
+    appended = []
+    run_calls = []
+    saved = []
+    input_widget = DummyInput()
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved.append((state, name)))
+
+    app._handle_hint_command("/hint")
+
+    assert app._lesson.hint_level == 1
+    assert saved == [(app._lesson, "default")]
+    assert app._messages[-1]["content"] == _hint_prompt(1)
+    assert run_calls == [True]
+    assert input_widget.disabled is True
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Hint 1/4" in text
+
+    app._handle_hint_command("/hint")
+    assert app._lesson.hint_level == 2
+    assert app._messages[-1]["content"] == _hint_prompt(2)
+
+
+def test_hint_level_clamps_at_max(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="redis", hint_level=MAX_HINT_LEVEL)
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: None)
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
+
+    app._handle_hint_command("/hint")
+
+    assert app._lesson.hint_level == MAX_HINT_LEVEL
+    assert app._messages[-1]["content"] == _hint_prompt(MAX_HINT_LEVEL)
+
+
+def test_new_lesson_resets_hint_level(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="redis", hint_level=3)
+    container = DummyContainer()
+    input_widget = DummyInput()
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr(app, "_reset_usage", lambda: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: None)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    app._handle_learn_command("/learn grep")
+
+    assert app._lesson.goal == "grep"
+    assert app._lesson.hint_level == 0
 
 
 def test_agent_command_lists_current_and_available(monkeypatch):

@@ -93,6 +93,25 @@ def _learn_goal_prompt(goal: str) -> str:
     )
 
 
+HINT_LEVELS: tuple[tuple[str, str], ...] = (
+    ("question", "Ask me one guiding question that points me toward the next step. Do not reveal the approach."),
+    ("nudge", "Give a short nudge naming the concept or area to focus on. Still no code."),
+    ("focused example", "Show a small, focused example of the technique in isolation, not the full solution for my task."),
+    ("near-solution", "Walk me through the solution for the current task step by step, stopping just short of writing the complete final code unless I ask."),
+)
+
+MAX_HINT_LEVEL = len(HINT_LEVELS)
+
+
+def _hint_prompt(level: int) -> str:
+    label, instruction = HINT_LEVELS[level - 1]
+    return (
+        f"I'm stuck on the current task. Give me a hint at strength {level} of "
+        f"{MAX_HINT_LEVEL} ({label}). {instruction} Keep it focused on the current "
+        "task only and stay in teaching mode."
+    )
+
+
 class AgentApp(App):
     TITLE = "Agent Daniel"
     BINDINGS = [
@@ -316,6 +335,7 @@ class AgentApp(App):
                 "/clear                         Clear current conversation",
                 "/export [filename]             Export conversation to Markdown",
                 "/learn <thing>                 Start a guided build-your-own lesson",
+                "/hint                          Get the next-strongest hint for the current task",
                 "/agent [name]                  Show or switch the active agent profile",
                 "/agent create [name]           Create a custom agent profile",
                 "/model [name]                  Show or switch the active model",
@@ -368,6 +388,10 @@ class AgentApp(App):
 
         if text == "/learn" or text.startswith("/learn "):
             self._handle_learn_command(text)
+            return
+
+        if text == "/hint" or text.startswith("/hint "):
+            self._handle_hint_command(text)
             return
 
         if text == "/agent" or text.startswith("/agent "):
@@ -733,6 +757,56 @@ class AgentApp(App):
         self._safe_msg_count = len(self._messages)
         self.query_one("#user-input", Input).disabled = True
         self._run_agent()
+
+    def _handle_hint_command(self, text: str) -> None:
+        arg = text[5:].strip()
+
+        if arg == "help":
+            for line in [
+                "/hint                Get the next-strongest hint for the current task",
+                "",
+                "Hints escalate one level each time you ask:",
+                "  1 question         A guiding question, no approach revealed",
+                "  2 nudge            Names the concept or area to focus on",
+                "  3 focused example  A small example of the technique in isolation",
+                "  4 near-solution    Step-by-step walkthrough of the current task",
+                "",
+                "The level resets to 1 when a new task or lesson starts.",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
+        if arg:
+            self._append_sync(Static(Text("Usage: /hint  (type /hint help for details)", style="dim")))
+            return
+
+        if self._lesson is None:
+            self._append_sync(Static(Text.assemble(
+                ("No active lesson. Start one with ", "dim"),
+                ("/learn <thing>", "bold yellow"),
+                (" before asking for a hint.", "dim"),
+            )))
+            return
+
+        self._lesson = self._lesson.escalated(MAX_HINT_LEVEL)
+        save_lesson(self._lesson, self._session_name)
+        level = self._lesson.hint_level
+        label = HINT_LEVELS[level - 1][0]
+        prompt = _hint_prompt(level)
+        self._messages.append({"role": "user", "content": prompt})
+        self._history.append(prompt)
+        self._history_index = len(self._history)
+        self._history_draft = ""
+        self._append_sync(Static(Text.assemble(
+            ("Hint ", "dim"),
+            (f"{level}/{MAX_HINT_LEVEL}", "bold"),
+            (f" ({label})", "dim"),
+        )))
+        self._append_sync(Static(Text.assemble(("You: ", "bold green"), (prompt, "white"))))
+        self._safe_msg_count = len(self._messages)
+        self.query_one("#user-input", Input).disabled = True
+        self._run_agent()
+
 
     def _handle_agent_command(self, text: str) -> None:
         arg = text[7:].strip()
