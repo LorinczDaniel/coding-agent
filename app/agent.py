@@ -49,7 +49,7 @@ async def run_agent(
         text_chunks: list[str] = []
         usage_obj = None
 
-        stream = await client.chat.completions.create(
+        stream = await client.chat.completions.create(  # type: ignore[call-overload]
             model=model,
             messages=messages,
             tools=get_tool_schemas(tool_allowlist),

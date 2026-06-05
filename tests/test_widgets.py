@@ -121,7 +121,7 @@ async def test_tool_block_populate_without_hidden_lines():
         await block.populate(preview, hidden, hidden_count, exit_code)
 
         statics = block.query(Static)
-        assert block._running is None
+        assert block._running_line is None
         assert len(block.query(ToolToggle)) == 0
         assert len(statics) >= 1
 
@@ -151,8 +151,8 @@ async def test_tool_block_populate_removes_running_indicator():
     block = ToolBlock("Read", "")
     app = _Harness(block)
     async with app.run_test():
-        assert block._running is not None
+        assert block._running_line is not None
         preview, hidden, hidden_count, exit_code = build_tool_body("Read", "content", {"file_path": "x.txt"})
         await block.populate(preview, hidden, hidden_count, exit_code)
 
-        assert block._running is None
+        assert block._running_line is None

@@ -108,22 +108,22 @@ class ToolToggle(Static):
 class ToolBlock(Vertical):
     def __init__(self, name: str, args_str: str) -> None:
         super().__init__()
-        self._name = name
+        self._tool_name = name
         self._args_str = args_str
-        self._running: Static | None = None
+        self._running_line: Static | None = None
 
     def compose(self) -> ComposeResult:
-        sep = "─" * max(4, 40 - len(self._name))
-        yield Static(Text.assemble(("┌─ ", "dim"), (self._name, "bold yellow"), (f" {sep}", "dim")))
+        sep = "─" * max(4, 40 - len(self._tool_name))
+        yield Static(Text.assemble(("┌─ ", "dim"), (self._tool_name, "bold yellow"), (f" {sep}", "dim")))
         if self._args_str:
             yield Static(Text.assemble(("│ ", "dim"), (self._args_str, "dim white")))
-        self._running = Static(Text("│ running…", style="dim italic"))
-        yield self._running
+        self._running_line = Static(Text("│ running…", style="dim italic"))
+        yield self._running_line
 
     async def populate(self, preview, hidden, hidden_count: int, exit_code: int | None) -> None:
-        if self._running is not None:
-            await self._running.remove()
-            self._running = None
+        if self._running_line is not None:
+            await self._running_line.remove()
+            self._running_line = None
         await self.mount(Static(preview))
         if hidden is not None:
             box = Static(hidden)

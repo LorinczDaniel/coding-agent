@@ -24,7 +24,7 @@ from .config import load_system_prompt
 from .format import format_usage
 from .session import (
     clear_session, load_session, save_session, list_sessions,
-    clear_lesson, load_lesson, save_lesson, LessonState,
+    load_lesson, save_lesson, LessonState,
     DEFAULT_SESSION, _validate_name, export_conversation, rename_session,
 )
 from .widgets import ToolBlock, TodoPanel, build_tool_body
@@ -454,13 +454,16 @@ class AgentApp(App):
         self._run_agent()
 
     def _answer_confirm(self, text: str) -> None:
+        pending = self._pending_confirm
+        if pending is None:
+            return
         answer = text.strip().lower()
         if answer in ("y", "yes"):
             self._append_sync(Static(Text.assemble(("You: ", "bold green"), ("approved", "white"))))
-            self._pending_confirm.set_result(True)
+            pending.set_result(True)
         elif answer in ("n", "no"):
             self._append_sync(Static(Text.assemble(("You: ", "bold green"), ("denied", "white"))))
-            self._pending_confirm.set_result(False)
+            pending.set_result(False)
         else:
             self._append_sync(Static(Text("Please answer y (approve) or n (deny).", style="dim")))
 
@@ -889,6 +892,8 @@ class AgentApp(App):
 
     def _answer_agent_switch(self, text: str) -> None:
         target = self._pending_agent_switch
+        if target is None:
+            return
         answer = text.strip().lower()
         if answer in ("y", "yes"):
             self._pending_agent_switch = None
