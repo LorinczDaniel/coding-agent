@@ -436,6 +436,17 @@ class AgentApp(App):
                 )))
             return
 
+        if text.startswith("/"):
+            command = text.split()[0]
+            self._append_sync(Static(Text.assemble(
+                ("Unknown command: ", "bold red"),
+                (command, "bold"),
+                (". Type ", "dim"),
+                ("/help", "bold yellow"),
+                (" for the list of commands.", "dim"),
+            )))
+            return
+
         inp.disabled = True
         self._append_sync(Static(Text.assemble(("You: ", "bold green"), (text, "white"))))
         self._messages.append({"role": "user", "content": text})

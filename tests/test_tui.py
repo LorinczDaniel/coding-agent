@@ -804,3 +804,172 @@ def test_session_transcript_excludes_system_tools_and_empty_assistant_calls():
         ("assistant", "I'll check."),
         ("assistant", "Final answer"),
     ]
+
+
+class DummyTodoPanel:
+    def __init__(self):
+        self.todos = [{"title": "task", "status": "in-progress"}]
+        self.display = True
+
+
+def _dispatch_app(monkeypatch, appended):
+    app = _make_app()
+    input_widget = DummyInput()
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    return app
+
+
+def test_send_routes_learn_to_handler(monkeypatch):
+    app = _make_app()
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_handle_learn_command", lambda text: calls.append(text))
+
+    app._send("/learn redis")
+
+    assert calls == ["/learn redis"]
+
+
+def test_send_routes_hint_to_handler(monkeypatch):
+    app = _make_app()
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_handle_hint_command", lambda text: calls.append(text))
+
+    app._send("/hint")
+
+    assert calls == ["/hint"]
+
+
+def test_send_routes_agent_to_handler(monkeypatch):
+    app = _make_app()
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_handle_agent_command", lambda text: calls.append(text))
+
+    app._send("/agent mentor")
+
+    assert calls == ["/agent mentor"]
+
+
+def test_send_routes_sessions_to_handler(monkeypatch):
+    app = _make_app()
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_handle_sessions_command", lambda text: calls.append(text))
+
+    app._send("/sessions list")
+
+    assert calls == ["/sessions list"]
+
+
+def test_send_help_lists_all_commands(monkeypatch):
+    appended = []
+    app = _dispatch_app(monkeypatch, appended)
+
+    app._send("/help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    for expected in ["/help", "/clear", "/export", "/learn", "/hint", "/agent", "/model", "/sessions", "/todo-clear"]:
+        assert expected in text
+
+
+def test_send_todo_clear_empties_panel(monkeypatch):
+    app = _make_app()
+    panel = DummyTodoPanel()
+    appended = []
+    monkeypatch.setattr(app, "query_one", lambda *args: panel)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/todo-clear")
+
+    assert panel.todos == []
+    assert panel.display is False
+    assert any("Todo list cleared" in _rendered_text(widget) for widget in appended)
+
+
+def test_send_model_help_explains_usage(monkeypatch):
+    appended = []
+    app = _dispatch_app(monkeypatch, appended)
+
+    app._send("/model help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "/model <name>" in text
+
+
+def test_send_model_no_arg_shows_current_and_options(monkeypatch):
+    appended = []
+    app = _dispatch_app(monkeypatch, appended)
+
+    app._send("/model")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Current model: haiku" in text
+
+
+def test_send_model_unknown_reports_options(monkeypatch):
+    appended = []
+    app = _dispatch_app(monkeypatch, appended)
+
+    app._send("/model nope")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown model: nope" in text
+    assert app._model == "haiku"
+
+
+def test_sessions_help_lists_subcommands(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_sessions_command("/sessions help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "/sessions new <name>" in text
+    assert "/sessions load <name>" in text
+    assert "/sessions rename <old> <new>" in text
+
+
+def test_sessions_unknown_subcommand_reports(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_sessions_command("/sessions bogus")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown subcommand" in text
+
+
+def test_send_unknown_command_reports_not_found(monkeypatch):
+    app = _make_app()
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+
+    app._send("/bogus do something")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown command: /bogus" in text
+    assert run_calls == []
+    assert app._messages == [{"role": "system", "content": "sys"}]
+
+
+def test_send_plain_message_goes_to_agent(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    run_calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+
+    app._send("how do I parse RESP?")
+
+    assert run_calls == [True]
+    assert app._messages[-1] == {"role": "user", "content": "how do I parse RESP?"}
+    assert input_widget.disabled is True
