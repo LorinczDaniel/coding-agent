@@ -202,6 +202,7 @@ class AgentApp(App):
         self.query_one("#user-input", Input).focus()
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._pending_agent_create: dict[str, object] | None = None
+        self._pending_agent_switch: str | None = None
         self._current_tool_block: ToolBlock | None = None
         self._history: list[str] = []
         self._history_index: int = 0
@@ -327,6 +328,10 @@ class AgentApp(App):
 
         if self._pending_agent_create is not None:
             self._answer_agent_create(text)
+            return
+
+        if self._pending_agent_switch is not None:
+            self._answer_agent_switch(text)
             return
 
         if text == "/help":
@@ -856,6 +861,39 @@ class AgentApp(App):
             )))
             return
 
+        if profile.name == self._agent_profile:
+            self._append_sync(Static(Text.assemble(
+                ("Already using agent ", "dim"),
+                (profile.name, "bold"),
+                (".", "dim"),
+            )))
+            return
+
+        self._pending_agent_switch = profile.name
+        self._append_sync(Static(Text.assemble(
+            ("Switching to agent ", "dim"),
+            (profile.name, "bold"),
+            (" starts a fresh conversation and clears the current one. Continue? (y/n)", "dim"),
+        )))
+
+    def _answer_agent_switch(self, text: str) -> None:
+        target = self._pending_agent_switch
+        answer = text.strip().lower()
+        if answer in ("y", "yes"):
+            self._pending_agent_switch = None
+            try:
+                profile = get_profile(target)
+            except ValueError:
+                self._append_sync(Static(Text(f"Agent '{target}' is no longer available.", style="bold red")))
+                return
+            self._perform_agent_switch(profile)
+        elif answer in ("n", "no"):
+            self._pending_agent_switch = None
+            self._append_sync(Static(Text("Kept the current agent.", style="dim")))
+        else:
+            self._append_sync(Static(Text("Please answer y (switch) or n (keep current).", style="dim")))
+
+    def _perform_agent_switch(self, profile: AgentProfile) -> None:
         save_session(self._messages, self._session_name)
         self._agent_profile = profile.name
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
