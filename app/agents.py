@@ -186,19 +186,22 @@ def _profile_from_dict(data: Any) -> AgentProfile | None:
     description = data.get("description")
     allowed_tools = data.get("allowed_tools")
     system_addendum = data.get("system_addendum")
-    if not all(isinstance(value, str) for value in (name, title, description, system_addendum)):
+    if not all(
+        isinstance(value, str)
+        for value in (name, title, description, system_addendum)
+    ):
         return None
 
     normalized_tools, err = validate_allowed_tools(allowed_tools)
-    if err:
+    if normalized_tools is None:
         return None
 
     profile = AgentProfile(
-        name=name.strip(),
-        title=title.strip(),
-        description=description.strip(),
+        name=str(name).strip(),
+        title=str(title).strip(),
+        description=str(description).strip(),
         allowed_tools=normalized_tools,
-        system_addendum=system_addendum.strip(),
+        system_addendum=str(system_addendum).strip(),
     )
     if validate_profile(profile, allow_builtin=True):
         return None

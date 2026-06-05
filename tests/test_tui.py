@@ -3,7 +3,7 @@ from app.format import format_usage
 from app.tui import (
     AgentApp, CONTEXT_WINDOWS, MODELS,
     _learn_goal_prompt, _refresh_system_prompt, _session_transcript,
-    HINT_LEVELS, MAX_HINT_LEVEL, _hint_prompt,
+    MAX_HINT_LEVEL, _hint_prompt,
 )
 from app.session import LessonState
 
