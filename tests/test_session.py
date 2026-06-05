@@ -203,7 +203,32 @@ def test_lesson_state_defaults():
     state = LessonState(goal="grep")
     assert state.milestones == ()
     assert state.current_index == 0
+    assert state.hint_level == 0
     assert LessonState.from_dict(state.to_dict()) == state
+
+
+def test_lesson_escalated_increments_and_clamps():
+    state = LessonState(goal="grep")
+    state = state.escalated(4)
+    assert state.hint_level == 1
+    state = state.escalated(4).escalated(4).escalated(4)
+    assert state.hint_level == 4
+    assert state.escalated(4).hint_level == 4
+
+
+def test_lesson_with_task_resets_hint_level():
+    state = LessonState(goal="grep", current_index=0, hint_level=3)
+    advanced = state.with_task(1)
+    assert advanced.current_index == 1
+    assert advanced.hint_level == 0
+
+
+def test_lesson_state_ignores_invalid_hint_level(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    (tmp_path / "bad.lesson.json").write_text(
+        json.dumps({"goal": "grep", "hint_level": -5}), encoding="utf-8"
+    )
+    assert load_lesson("bad").hint_level == 0
 
 
 def test_clear_lesson_removes_only_lesson(tmp_path, monkeypatch):
