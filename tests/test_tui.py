@@ -48,6 +48,7 @@ def _make_app():
     app._history_draft = ""
     app._pending_confirm = None
     app._pending_agent_create = None
+    app._pending_agent_switch = None
     app._current_tool_block = None
     app._total_in = 1234
     app._total_out = 567
@@ -528,6 +529,75 @@ def test_agent_create_can_be_cancelled(monkeypatch, tmp_path):
     assert any("cancelled" in _rendered_text(widget) for widget in appended)
 
 
+def test_agent_create_rejects_multiple_name_tokens(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create foo bar")
+
+    assert app._pending_agent_create is None
+    assert any("Usage: /agent create [name]" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_create_inline_invalid_name_aborts(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create Bad")
+
+    assert app._pending_agent_create is None
+    assert any("must start with a lowercase letter" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_create_inline_existing_name_aborts(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create coach")
+
+    assert app._pending_agent_create is None
+    assert any("built in" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_create_reprompts_for_empty_title(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create reviewer")
+    app._answer_agent_create("   ")
+
+    assert app._pending_agent_create["step"] == "title"
+    assert any("title cannot be empty" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_create_reprompts_for_empty_tools(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    appended = []
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent create reviewer")
+    app._answer_agent_create("Code Reviewer")
+    app._answer_agent_create("Reviews code changes.")
+    app._answer_agent_create("")
+
+    assert app._pending_agent_create["step"] == "allowed_tools"
+    assert any("At least one allowed tool is required" in _rendered_text(widget) for widget in appended)
+
+
 def test_agent_unknown_profile_shows_available_options(monkeypatch):
     app = _make_app()
     appended = []
@@ -561,19 +631,74 @@ def test_agent_switch_saves_and_starts_fresh(monkeypatch):
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
     monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
 
-    app._handle_agent_command("/agent coach")
+    app._handle_agent_command("/agent mentor")
 
+    # Switch only happens after confirmation; nothing reset yet.
+    assert app._pending_agent_switch == "mentor"
+    assert saved == []
+    assert app._agent_profile == "coach"
+    assert container.removed is False
+    assert any("starts a fresh conversation" in _rendered_text(widget) for widget in appended)
+
+    app._answer_agent_switch("y")
+
+    assert app._pending_agent_switch is None
     assert saved == [([
         {"role": "system", "content": "old system"},
         {"role": "user", "content": "old question"},
     ], "default")]
-    assert app._agent_profile == "coach"
-    assert app._messages == [{"role": "system", "content": "system coach"}]
+    assert app._agent_profile == "mentor"
+    assert app._messages == [{"role": "system", "content": "system mentor"}]
     assert app._history == []
     assert app._history_index == 0
     assert container.removed is True
     assert reset_calls == [True]
-    assert any("Switched to agent coach" in _rendered_text(widget) for widget in appended)
+    assert any("Switched to agent mentor" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_switch_declined_keeps_current(monkeypatch):
+    app = _make_app()
+    container = DummyContainer()
+    appended = []
+    saved = []
+    app._messages = [{"role": "system", "content": "old system"}]
+
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+
+    app._handle_agent_command("/agent mentor")
+    app._answer_agent_switch("n")
+
+    assert app._pending_agent_switch is None
+    assert app._agent_profile == "coach"
+    assert app._messages == [{"role": "system", "content": "old system"}]
+    assert saved == []
+    assert container.removed is False
+    assert any("Kept the current agent" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_switch_invalid_answer_reprompts(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent mentor")
+    app._answer_agent_switch("maybe")
+
+    assert app._pending_agent_switch == "mentor"
+    assert any("y (switch) or n (keep current)" in _rendered_text(widget) for widget in appended)
+
+
+def test_agent_switch_to_current_is_noop(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_agent_command("/agent coach")
+
+    assert app._pending_agent_switch is None
+    assert any("Already using agent coach" in _rendered_text(widget) for widget in appended)
 
 
 def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
@@ -598,6 +723,7 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
     monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
 
     app._handle_agent_command("/agent reviewer")
+    app._answer_agent_switch("yes")
 
     assert saved == [([
         {"role": "system", "content": "old system"},
