@@ -29,19 +29,17 @@ On startup the agent is told its working directory and a guess at the project ty
 ### UI features
 
 - **Streaming responses** — text appears as the model generates it, not all at once
-- **Inline tool blocks** — each tool call is shown in a styled box as it happens:
+- **Inline tool output** — tool calls are shown as unframed, styled output as they happen:
   ```
-  ┌─ Bash ──────────────────────────────
-  │ ls -la
-  │ total 32
-  │ drwxr-xr-x  app/
-  │ -rw-r--r--  pyproject.toml
-  └─ exit 0 ────────────────────────────
+  Bash
+  ls -la
+  exit 0
   ```
 - **Rich tool output** —
   - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions) instead of dumping the whole file; new files render as all-additions
   - `Read` output is **syntax-highlighted** (lexer guessed from the file extension) with line numbers
-  - `Bash` blocks show **stdout** and **stderr** as separate sections, with stderr dimmed red, and show the command's **exit code** in the closing line (green for 0, red otherwise)
+  - `Bash` output hides **stdout** in the chat, shows **stderr** when present, and shows the command's **exit code** on a final line (green for 0, red otherwise)
+  - `TodoWrite` updates the todo panel without dumping its arguments or result into the chat
   - `Read` and `Bash` results over 50KB are truncated before rendering, keeping the beginning and end with an explicit truncated marker
   - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal

@@ -17,7 +17,7 @@ def _join(text_lines: list[Text]) -> Text:
 def _line_renderables(lines: list[str], style):
     def mk(line: str) -> Text:
         st = style(line) if callable(style) else style
-        return Text.assemble(("│ ", "dim"), (line, st))
+        return Text(line, style=st)
 
     preview = [mk(line) for line in lines[:MAX_BLOCK_LINES]]
     hidden_lines = lines[MAX_BLOCK_LINES:]
@@ -28,16 +28,17 @@ def _line_renderables(lines: list[str], style):
 def _bash_renderables(body: str):
     rendered: list[Text] = []
     for stream, text in split_bash_streams(body):
-        label_style = "dim cyan" if stream == "stdout" else "bold red"
-        line_style = "white" if stream == "stdout" else "dim red"
-        rendered.append(Text.assemble(("│ ", "dim"), (stream, label_style)))
+        if stream == "stdout":
+            continue
+        rendered.append(Text(stream, style="bold red"))
         for line in text.rstrip("\n").splitlines():
-            rendered.append(Text.assemble(("│ ", "dim"), (line, line_style)))
+            rendered.append(Text(line, style="dim red"))
 
     preview_lines = rendered[:MAX_BLOCK_LINES]
     hidden_lines = rendered[MAX_BLOCK_LINES:]
+    preview = _join(preview_lines) if preview_lines else None
     hidden = _join(hidden_lines) if hidden_lines else None
-    return _join(preview_lines), hidden, len(hidden_lines)
+    return preview, hidden, len(hidden_lines)
 
 
 def _read_renderables(result: str, file_path: str):
@@ -65,7 +66,7 @@ def _read_renderables(result: str, file_path: str):
 
 
 def build_tool_body(name: str, result: str, args: dict):
-    """Return (preview, hidden_or_None, hidden_count, exit_code_or_None)."""
+    """Return (preview_or_None, hidden_or_None, hidden_count, exit_code_or_None)."""
     if name == "Bash":
         code, body = parse_exit_code(result)
         preview, hidden, count = _bash_renderables(body)
@@ -80,11 +81,11 @@ def build_tool_body(name: str, result: str, args: dict):
     return preview, hidden, count, None
 
 
-def _footer(exit_code: int | None) -> Text:
+def _exit_line(exit_code: int | None) -> Text | None:
     if exit_code is None:
-        return Text("└" + "─" * 42, style="dim")
+        return None
     code_style = "bold green" if exit_code == 0 else "bold red"
-    return Text.assemble(("└─ ", "dim"), (f"exit {exit_code} ", code_style), ("─" * 32, "dim"))
+    return Text(f"exit {exit_code}", style=code_style)
 
 
 class ToolToggle(Static):
@@ -97,7 +98,7 @@ class ToolToggle(Static):
     def _label(self) -> Text:
         arrow = "▾" if self._expanded else "▸"
         verb = "hide" if self._expanded else f"show {self._hidden_count} more lines"
-        return Text(f"│ {arrow} {verb}", style="dim")
+        return Text(f"{arrow} {verb}", style="dim")
 
     def on_click(self) -> None:
         self._expanded = not self._expanded
@@ -106,6 +107,13 @@ class ToolToggle(Static):
 
 
 class ToolBlock(Vertical):
+    DEFAULT_CSS = """
+    ToolBlock {
+        height: auto;
+        margin: 1 0;
+    }
+    """
+
     def __init__(self, name: str, args_str: str) -> None:
         super().__init__()
         self._tool_name = name
@@ -113,24 +121,26 @@ class ToolBlock(Vertical):
         self._running_line: Static | None = None
 
     def compose(self) -> ComposeResult:
-        sep = "─" * max(4, 40 - len(self._tool_name))
-        yield Static(Text.assemble(("┌─ ", "dim"), (self._tool_name, "bold yellow"), (f" {sep}", "dim")))
+        yield Static(Text(self._tool_name, style="bold yellow"))
         if self._args_str:
-            yield Static(Text.assemble(("│ ", "dim"), (self._args_str, "dim white")))
-        self._running_line = Static(Text("│ running…", style="dim italic"))
+            yield Static(Text(self._args_str, style="dim white"))
+        self._running_line = Static(Text("running…", style="dim italic"))
         yield self._running_line
 
     async def populate(self, preview, hidden, hidden_count: int, exit_code: int | None) -> None:
         if self._running_line is not None:
             await self._running_line.remove()
             self._running_line = None
-        await self.mount(Static(preview))
+        if preview is not None:
+            await self.mount(Static(preview))
         if hidden is not None:
             box = Static(hidden)
             box.display = False
             await self.mount(box)
             await self.mount(ToolToggle(hidden_count, box))
-        await self.mount(Static(_footer(exit_code)))
+        exit_line = _exit_line(exit_code)
+        if exit_line is not None:
+            await self.mount(Static(exit_line))
 
 
 _STATUS_ICONS = {

@@ -768,6 +768,58 @@ async def test_run_agent_uses_active_profile_tool_allowlist(monkeypatch, tmp_pat
     assert saved == [(app._messages, "default")]
 
 
+async def test_run_agent_hides_todowrite_chat_output_but_updates_panel(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    panel = DummyTodoPanel()
+    appended = []
+    saved = []
+    todos = [{"id": 1, "title": "plan next step", "status": "in-progress"}]
+
+    async def fake_append(widget):
+        appended.append(widget)
+
+    async def fake_run_agent(
+        messages,
+        model,
+        on_text,
+        on_tool_start,
+        on_tool_result,
+        on_usage,
+        on_tool_confirm,
+        on_todo,
+        **kwargs,
+    ):
+        await on_tool_start("TodoWrite", '{"todos": []}')
+        await on_todo(todos)
+        await on_tool_result(
+            "TodoWrite",
+            "Todo list updated:\n● plan next step",
+            {"todos": todos},
+        )
+
+    def query_one(selector, *args):
+        if selector == "#todo-panel":
+            return panel
+        return input_widget
+
+    monkeypatch.setattr(app, "query_one", query_one)
+    monkeypatch.setattr(app, "_append", fake_append)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
+
+    await AgentApp._run_agent.__wrapped__(app)
+
+    rendered = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "TodoWrite" not in rendered
+    assert "todos=" not in rendered
+    assert "Todo list updated" not in rendered
+    assert panel.display is True
+    assert panel.todos == todos
+    assert saved == [(app._messages, "default")]
+
+
 def test_refresh_system_prompt_replaces_existing_system_message():
     messages = [
         {"role": "system", "content": "old system"},
