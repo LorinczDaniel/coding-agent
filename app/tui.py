@@ -101,6 +101,7 @@ HINT_LEVELS: tuple[tuple[str, str], ...] = (
 )
 
 MAX_HINT_LEVEL = len(HINT_LEVELS)
+HIDDEN_CHAT_TOOLS = {"TodoWrite"}
 
 
 def _hint_prompt(level: int) -> str:
@@ -962,6 +963,8 @@ class AgentApp(App):
             nonlocal first_text_chunk
             await flush_buffer()
             first_text_chunk = True
+            if name in HIDDEN_CHAT_TOOLS:
+                return
             try:
                 args = json.loads(args_json)
                 args_str = "  ".join(f"{k}={v}" for k, v in args.items())
@@ -974,6 +977,8 @@ class AgentApp(App):
         async def on_tool_result(name: str, result: str, args: dict) -> None:
             nonlocal first_text_chunk
             first_text_chunk = True
+            if name in HIDDEN_CHAT_TOOLS:
+                return
             block = self._current_tool_block
             self._current_tool_block = None
             preview, hidden, hidden_count, exit_code = build_tool_body(name, result, args)

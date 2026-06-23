@@ -1,5 +1,6 @@
 from app.widgets import build_tool_body
 
+from rich.syntax import Syntax
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
@@ -16,6 +17,13 @@ def _styles_for(text, needle: str) -> list[str]:
     ]
 
 
+def _plain_content(widget: Static) -> str:
+    content = widget.content
+    if hasattr(content, "plain"):
+        return content.plain
+    return str(content)
+
+
 class _Harness(App):
     """Minimal app used to mount widgets for testing."""
 
@@ -28,7 +36,7 @@ class _Harness(App):
             yield widget
 
 
-def test_bash_tool_body_separates_stdout_and_stderr_styles():
+def test_bash_tool_body_hides_stdout_but_shows_stderr():
     result = "[exit 0]\n[stdout]\nnormal\n[stderr]\nwarning\n"
 
     preview, hidden, hidden_count, exit_code = build_tool_body("Bash", result, {})
@@ -36,12 +44,50 @@ def test_bash_tool_body_separates_stdout_and_stderr_styles():
     assert exit_code == 0
     assert hidden is None
     assert hidden_count == 0
-    assert "stdout" in preview.plain
-    assert "normal" in preview.plain
+    assert preview is not None
+    assert "stdout" not in preview.plain
+    assert "normal" not in preview.plain
     assert "stderr" in preview.plain
     assert "warning" in preview.plain
-    assert "white" in _styles_for(preview, "normal")
+    assert "│" not in preview.plain
     assert "dim red" in _styles_for(preview, "warning")
+
+
+def test_bash_tool_body_returns_no_output_for_stdout_only():
+    result = "[exit 0]\n[stdout]\nnormal\n"
+
+    preview, hidden, hidden_count, exit_code = build_tool_body("Bash", result, {})
+
+    assert exit_code == 0
+    assert preview is None
+    assert hidden is None
+    assert hidden_count == 0
+
+
+def test_diff_tool_body_preserves_styles_without_gutter():
+    result = "--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-old\n+new\n"
+
+    preview, hidden, hidden_count, exit_code = build_tool_body("Edit", result, {})
+
+    assert hidden is None
+    assert hidden_count == 0
+    assert exit_code is None
+    assert "│" not in preview.plain
+    assert "red" in _styles_for(preview, "-old")
+    assert "green" in _styles_for(preview, "+new")
+
+
+def test_read_tool_body_keeps_syntax_renderable():
+    preview, hidden, hidden_count, exit_code = build_tool_body(
+        "Read",
+        "print('hello')\n",
+        {"file_path": "demo.py"},
+    )
+
+    assert isinstance(preview, Syntax)
+    assert hidden is None
+    assert hidden_count == 0
+    assert exit_code is None
 
 
 def test_todo_panel_renders_no_tasks_when_empty():
@@ -90,6 +136,18 @@ def test_tool_toggle_label_starts_collapsed():
 
     assert "▸" in label.plain
     assert "show 3 more lines" in label.plain
+    assert "│" not in label.plain
+
+
+async def test_tool_block_renders_unframed_header_without_manual_border():
+    block = ToolBlock("Bash", "cmd=ls")
+    app = _Harness(block)
+    async with app.run_test():
+        assert "border:" not in ToolBlock.DEFAULT_CSS
+        contents = [_plain_content(static) for static in block.query(Static)]
+
+        assert contents == ["Bash", "cmd=ls", "running…"]
+        assert not any("┌" in content or "└" in content or "────" in content for content in contents)
 
 
 async def test_tool_toggle_on_click_expands_and_collapses():
@@ -131,13 +189,15 @@ async def test_tool_block_populate_with_hidden_lines_adds_toggle():
     app = _Harness(block)
     async with app.run_test():
         lines = "\n".join(f"line {i}" for i in range(40))
-        result = f"[exit 0]\n[stdout]\n{lines}\n"
+        result = f"[exit 0]\n[stderr]\n{lines}\n"
         preview, hidden, hidden_count, exit_code = build_tool_body("Bash", result, {})
         assert hidden is not None
 
         await block.populate(preview, hidden, hidden_count, exit_code)
 
         toggles = block.query(ToolToggle)
+        contents = [_plain_content(static) for static in block.query(Static)]
+        assert "exit 0" in contents
         assert len(toggles) == 1
         toggle = toggles.first()
         hidden_box = toggle._target
@@ -145,6 +205,22 @@ async def test_tool_block_populate_with_hidden_lines_adds_toggle():
 
         toggle.on_click()
         assert hidden_box.display is True
+
+
+async def test_tool_block_populate_stdout_only_bash_shows_exit_without_output():
+    block = ToolBlock("Bash", "cmd=echo normal")
+    app = _Harness(block)
+    async with app.run_test():
+        preview, hidden, hidden_count, exit_code = build_tool_body(
+            "Bash",
+            "[exit 0]\n[stdout]\nnormal\n",
+            {},
+        )
+
+        await block.populate(preview, hidden, hidden_count, exit_code)
+
+        contents = [_plain_content(static) for static in block.query(Static)]
+        assert contents == ["Bash", "cmd=echo normal", "exit 0"]
 
 
 async def test_tool_block_populate_removes_running_indicator():
