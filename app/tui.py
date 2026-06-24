@@ -161,18 +161,18 @@ def _hint_level_display(level: int) -> str:
 
 
 def _active_context_text(profile_name: str, lesson: LessonState | None) -> Text:
-    parts: list[tuple[str, str]] = [
+    parts: list[str | tuple[str, str]] = [
         ("Profile: ", "dim"),
-        (profile_name, "bold cyan"),
+        profile_name,
         ("  Lesson: ", "dim"),
     ]
     if lesson is None:
-        parts.append(("not started", "dim"))
+        parts.append("not started")
     else:
         parts.extend([
-            (lesson.goal, "bold green"),
+            lesson.goal,
             ("  Hint: ", "dim"),
-            (_hint_level_display(lesson.hint_level), "bold yellow"),
+            _hint_level_display(lesson.hint_level),
         ])
     return Text.assemble(*parts)
 
@@ -424,9 +424,9 @@ class AgentApp(App):
 
         banner.update(Text.assemble(
             ("Lesson: ", "dim"),
-            (self._lesson.goal, "bold"),
+            self._lesson.goal,
             ("  Hint: ", "dim"),
-            (_hint_level_display(self._lesson.hint_level), "bold yellow"),
+            _hint_level_display(self._lesson.hint_level),
         ))
         banner.display = True
         panel.todos = _lesson_todos(self._lesson)
