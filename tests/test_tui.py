@@ -61,11 +61,13 @@ def _query_widgets(
     usage_bar=None,
     panel=None,
     banner=None,
+    context_bar=None,
 ):
     input_widget = input_widget or DummyInput()
     usage_bar = usage_bar or DummyUsageBar()
     panel = panel or DummyTodoPanel()
     banner = banner or DummyBanner()
+    context_bar = context_bar or DummyBanner()
 
     def query_one(selector, *args):
         if selector == "#usage-bar":
@@ -74,16 +76,24 @@ def _query_widgets(
             return panel
         if selector == "#lesson-banner":
             return banner
+        if selector == "#active-context-bar":
+            return context_bar
         return input_widget
 
     return query_one
 
 
-def _lesson_widgets(monkeypatch, app, input_widget=None, panel=None, banner=None, usage_bar=None):
+def _lesson_widgets(monkeypatch, app, input_widget=None, panel=None, banner=None, usage_bar=None, context_bar=None):
     monkeypatch.setattr(
         app,
         "query_one",
-        _query_widgets(input_widget=input_widget, usage_bar=usage_bar, panel=panel, banner=banner),
+        _query_widgets(
+            input_widget=input_widget,
+            usage_bar=usage_bar,
+            panel=panel,
+            banner=banner,
+            context_bar=context_bar,
+        ),
     )
 
 
@@ -135,6 +145,18 @@ def test_reset_usage_clears_counters_and_updates_bar(monkeypatch):
         CONTEXT_WINDOWS[MODELS["haiku"]],
         "coach",
     )
+
+
+def test_active_context_bar_shows_profile_without_lesson(monkeypatch):
+    app = _make_app()
+    context_bar = DummyBanner()
+    _lesson_widgets(monkeypatch, app, context_bar=context_bar)
+
+    app._update_active_context_bar()
+
+    text = _plain(context_bar.value)
+    assert "Profile: coach" in text
+    assert "Lesson: not started" in text
 
 
 def test_clear_resets_usage(monkeypatch):
@@ -308,6 +330,7 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     input_widget = DummyInput()
     panel = DummyTodoPanel()
     banner = DummyBanner()
+    context_bar = DummyBanner()
     appended = []
     saved = []
     reset_calls = []
@@ -320,7 +343,7 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     app._history = ["old question"]
     app._history_index = 1
 
-    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner, context_bar=context_bar)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
@@ -354,12 +377,15 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     assert banner.display is True
     assert "Lesson: redis" in _plain(banner.value)
     assert "Hint: 0/4 (none)" in _plain(banner.value)
+    assert "Profile: coach" in _plain(context_bar.value)
+    assert "Lesson: redis" in _plain(context_bar.value)
 
 
 def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
     app = _make_app()
     panel = DummyTodoPanel()
     banner = DummyBanner()
+    context_bar = DummyBanner()
     app._lesson = LessonState(
         goal="grep",
         milestones=("Parse command-line arguments", "Search files"),
@@ -367,7 +393,7 @@ def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
         hint_level=2,
     )
 
-    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner)
+    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner, context_bar=context_bar)
 
     app._refresh_lesson_ui()
 
@@ -379,6 +405,9 @@ def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
         {"id": 1, "title": "Parse command-line arguments", "status": "completed"},
         {"id": 2, "title": "Search files", "status": "in-progress"},
     ]
+    assert "Profile: coach" in _plain(context_bar.value)
+    assert "Lesson: grep" in _plain(context_bar.value)
+    assert "Hint: 2/4 (nudge)" in _plain(context_bar.value)
 
 
 def test_hint_help_shows_ladder(monkeypatch):
@@ -431,11 +460,12 @@ def test_hint_escalates_level_and_runs_agent(monkeypatch):
     app._lesson = LessonState(goal="redis")
     panel = DummyTodoPanel()
     banner = DummyBanner()
+    context_bar = DummyBanner()
     appended = []
     run_calls = []
     saved = []
     input_widget = DummyInput()
-    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner, context_bar=context_bar)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved.append((state, name)))
@@ -450,11 +480,13 @@ def test_hint_escalates_level_and_runs_agent(monkeypatch):
     text = "\n".join(_rendered_text(widget) for widget in appended)
     assert "Hint 1/4" in text
     assert "Hint: 1/4 (question)" in _plain(banner.value)
+    assert "Hint: 1/4 (question)" in _plain(context_bar.value)
 
     app._handle_hint_command("/hint")
     assert app._lesson.hint_level == 2
     assert app._messages[-1]["content"] == _hint_prompt(2)
     assert "Hint: 2/4 (nudge)" in _plain(banner.value)
+    assert "Hint: 2/4 (nudge)" in _plain(context_bar.value)
 
 
 def test_hint_level_clamps_at_max(monkeypatch):
@@ -721,9 +753,13 @@ def test_agent_unknown_profile_shows_available_options(monkeypatch):
 def test_agent_switch_saves_and_starts_fresh(monkeypatch):
     app = _make_app()
     container = DummyContainer()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
+    context_bar = DummyBanner()
     appended = []
     saved = []
     reset_calls = []
+    app._lesson = LessonState(goal="redis", milestones=("Parse RESP",), hint_level=2)
     app._messages = [
         {"role": "system", "content": "old system"},
         {"role": "user", "content": "old question"},
@@ -731,6 +767,7 @@ def test_agent_switch_saves_and_starts_fresh(monkeypatch):
     app._history = ["old question"]
     app._history_index = 1
 
+    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner, context_bar=context_bar)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
@@ -755,8 +792,14 @@ def test_agent_switch_saves_and_starts_fresh(monkeypatch):
     ], "default")]
     assert app._agent_profile == "mentor"
     assert app._messages == [{"role": "system", "content": "system mentor"}]
+    assert app._lesson is None
     assert app._history == []
     assert app._history_index == 0
+    assert panel.todos == []
+    assert panel.display is False
+    assert banner.display is False
+    assert "Profile: mentor" in _plain(context_bar.value)
+    assert "Lesson: not started" in _plain(context_bar.value)
     assert container.removed is True
     assert reset_calls == [True]
     assert any("Switched to agent mentor" in _rendered_text(widget) for widget in appended)
@@ -813,6 +856,9 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
     app = _make_app()
     container = DummyContainer()
     usage_bar = DummyUsageBar()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
+    context_bar = DummyBanner()
     appended = []
     saved = []
     app._messages = [
@@ -822,7 +868,7 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
     app._history = ["old question"]
     app._history_index = 1
 
-    monkeypatch.setattr(app, "query_one", lambda *args: usage_bar)
+    _lesson_widgets(monkeypatch, app, usage_bar=usage_bar, panel=panel, banner=banner, context_bar=context_bar)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
@@ -837,6 +883,7 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
     ], "default")]
     assert app._agent_profile == "reviewer"
     assert app._messages == [{"role": "system", "content": "system reviewer"}]
+    assert app._lesson is None
     assert app._history == []
     assert app._history_index == 0
     assert container.removed is True
@@ -848,6 +895,8 @@ def test_agent_switches_to_custom_profile(monkeypatch, tmp_path):
         CONTEXT_WINDOWS[MODELS["haiku"]],
         "reviewer",
     )
+    assert "Profile: reviewer" in _plain(context_bar.value)
+    assert "Lesson: not started" in _plain(context_bar.value)
     assert any("Switched to agent reviewer" in _rendered_text(widget) for widget in appended)
 
 
@@ -1185,4 +1234,35 @@ def test_send_plain_message_goes_to_agent(monkeypatch):
 
     assert run_calls == [True]
     assert app._messages[-1] == {"role": "user", "content": "how do I parse RESP?"}
+    assert app._lesson is None
+    assert input_widget.disabled is True
+
+
+def test_send_learning_message_starts_coach_lesson(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
+    context_bar = DummyBanner()
+    run_calls = []
+    saved_lessons = []
+
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner, context_bar=context_bar)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved_lessons.append((state, name)))
+
+    app._send("I want to learn C++")
+
+    assert run_calls == [True]
+    assert app._lesson == LessonState(goal="C++")
+    assert app._messages[-1] == {"role": "user", "content": "I want to learn C++"}
+    assert saved_lessons == [(app._lesson, "default")]
+    assert panel.display is True
+    assert panel.todos == []
+    assert banner.display is True
+    assert "Lesson: C++" in _plain(banner.value)
+    assert "Hint: 0/4 (none)" in _plain(banner.value)
+    assert "Profile: coach" in _plain(context_bar.value)
+    assert "Lesson: C++" in _plain(context_bar.value)
     assert input_widget.disabled is True
