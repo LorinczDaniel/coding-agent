@@ -102,6 +102,55 @@ HINT_LEVELS: tuple[tuple[str, str], ...] = (
 
 MAX_HINT_LEVEL = len(HINT_LEVELS)
 HIDDEN_CHAT_TOOLS = {"TodoWrite"}
+_LEARNING_GOAL_PATTERNS = (
+    re.compile(
+        r"\b(?:i\s+)?(?:want|wanna|would like|need|am trying|i'm trying)\s+to\s+"
+        r"(?:learn|study|practice)\s+(?P<goal>[^.?!\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bhelp\s+me\s+(?:learn|study|practice)\s+(?P<goal>[^.?!\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:teach|coach)\s+me\s+(?:about\s+)?(?P<goal>[^.?!\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:i\s+)?(?:want|wanna|would like)\s+to\s+build\s+(?:my\s+own\s+)?(?P<goal>[^.?!\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:let's|lets)\s+(?:learn|study|practice|build)\s+(?P<goal>[^.?!\n]+)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _clean_learning_goal(goal: str) -> str | None:
+    cleaned = goal.strip().strip("\"'`.,;:!? ")
+    cleaned = re.split(
+        r"\s+(?:from\s+scratch|from\s+the\s+ground\s+up|step\s+by\s+step|for\s+beginners|please|pls)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    cleaned = re.split(
+        r"\s+(?:because|but|so\s+that|so\s+i\s+can)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    cleaned = cleaned.strip().strip("\"'`.,;:!? ")
+    return cleaned or None
+
+
+def _extract_learning_goal(text: str) -> str | None:
+    for pattern in _LEARNING_GOAL_PATTERNS:
+        match = pattern.search(text.strip())
+        if match:
+            return _clean_learning_goal(match.group("goal"))
+    return None
 
 
 def _hint_level_display(level: int) -> str:
@@ -109,6 +158,23 @@ def _hint_level_display(level: int) -> str:
         return f"0/{MAX_HINT_LEVEL} (none)"
     clamped = min(level, MAX_HINT_LEVEL)
     return f"{clamped}/{MAX_HINT_LEVEL} ({HINT_LEVELS[clamped - 1][0]})"
+
+
+def _active_context_text(profile_name: str, lesson: LessonState | None) -> Text:
+    parts: list[tuple[str, str]] = [
+        ("Profile: ", "dim"),
+        (profile_name, "bold cyan"),
+        ("  Lesson: ", "dim"),
+    ]
+    if lesson is None:
+        parts.append(("not started", "dim"))
+    else:
+        parts.extend([
+            (lesson.goal, "bold green"),
+            ("  Hint: ", "dim"),
+            (_hint_level_display(lesson.hint_level), "bold yellow"),
+        ])
+    return Text.assemble(*parts)
 
 
 def _lesson_todos(lesson: LessonState) -> list[dict]:
@@ -196,7 +262,7 @@ class AgentApp(App):
     }
 
     #bottom-bar {
-        height: 4;
+        height: 5;
         dock: bottom;
     }
 
@@ -204,6 +270,13 @@ class AgentApp(App):
         height: 1;
         padding: 0 1;
         color: $text-muted;
+        background: $panel;
+    }
+
+    #active-context-bar {
+        height: 1;
+        padding: 0 1;
+        color: $text;
         background: $panel;
     }
 
@@ -235,6 +308,7 @@ class AgentApp(App):
                 ),
                 id="usage-bar",
             )
+            yield Static("", id="active-context-bar")
             yield Horizontal(
                 Input(placeholder="Type a message...", id="user-input"),
                 id="input-bar",
@@ -280,6 +354,7 @@ class AgentApp(App):
             self._append_session_transcript(self._messages)
         else:
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+        self._update_active_context_bar()
 
     def _container(self) -> VerticalScroll:
         return self.query_one("#chat-log", VerticalScroll)
@@ -324,11 +399,27 @@ class AgentApp(App):
         self._total_cost = 0.0
         self._update_usage_bar()
 
+    def _update_active_context_bar(self) -> None:
+        self.query_one("#active-context-bar", Static).update(
+            _active_context_text(self._agent_profile, self._lesson)
+        )
+
+    def _maybe_start_coach_lesson_from_message(self, text: str) -> None:
+        if self._agent_profile != COACH_PROFILE or self._lesson is not None:
+            return
+        goal = _extract_learning_goal(text)
+        if goal is None:
+            return
+        self._lesson = LessonState(goal=goal)
+        save_lesson(self._lesson, self._session_name)
+        self._refresh_lesson_ui()
+
     def _refresh_lesson_ui(self) -> None:
         banner = self.query_one("#lesson-banner", Static)
         panel = self.query_one("#todo-panel", TodoPanel)
         if self._lesson is None:
             banner.display = False
+            self._update_active_context_bar()
             return
 
         banner.update(Text.assemble(
@@ -340,6 +431,7 @@ class AgentApp(App):
         banner.display = True
         panel.todos = _lesson_todos(self._lesson)
         panel.display = True
+        self._update_active_context_bar()
 
     def _update_lesson_milestones(self, todos: list[dict]) -> None:
         if self._lesson is None:
@@ -532,6 +624,7 @@ class AgentApp(App):
 
         inp.disabled = True
         self._append_sync(Static(Text.assemble(("You: ", "bold green"), (text, "white"))))
+        self._maybe_start_coach_lesson_from_message(text)
         self._messages.append({"role": "user", "content": text})
         self._safe_msg_count = len(self._messages)
         self._run_agent()
@@ -1011,9 +1104,14 @@ class AgentApp(App):
         save_session(self._messages, self._session_name)
         self._agent_profile = profile.name
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+        self._lesson = None
         self._current_tool_block = None
         self._history.clear()
         self._history_index = 0
+        panel = self.query_one("#todo-panel", TodoPanel)
+        panel.todos = []
+        panel.display = False
+        self._refresh_lesson_ui()
         self._container().remove_children()
         self._reset_usage()
         self._append_sync(Static(Text.assemble(
