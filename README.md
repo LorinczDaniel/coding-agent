@@ -75,7 +75,9 @@ On startup the agent is told its working directory and a guess at the project ty
 
 Every command also supports a `help` subcommand (e.g. `/model help`, `/sessions help`).
 
-**Keyboard shortcuts:** `Ctrl+X` to quit, `Escape` to interrupt the agent mid-turn.
+### Keyboard shortcuts
+
+Use <kbd>Ctrl</kbd>+<kbd>X</kbd> to quit, or <kbd>Esc</kbd> to interrupt the agent mid-turn.
 
 ---
 
@@ -130,6 +132,8 @@ uv run -m app.main
 
 The Textual TUI opens in your terminal. The input box at the bottom is focused automatically.
 
+The app inherits your terminal font. In VS Code, this workspace recommends Cascadia Code first, with JetBrains Mono and Fira Code as fallbacks; install one of those fonts or set your preferred terminal font if the default terminal face feels too plain.
+
 ---
 
 ## Usage
@@ -140,9 +144,9 @@ Type a message and press **Enter** or click **Send**. The agent streams its resp
 
 | Key | Action |
 |---|---|
-| `Enter` | Send message |
-| `Esc` | Interrupt the running agent. Drops any partial response from the conversation, keeps your last user message, and re-enables input so you can steer or retry. |
-| `Ctrl+X` | Quit |
+| <kbd>Enter</kbd> | Send message |
+| <kbd>Esc</kbd> | Interrupt the running agent. Drops any partial response from the conversation, keeps your last user message, and re-enables input so you can steer or retry. |
+| <kbd>Ctrl</kbd>+<kbd>X</kbd> | Quit |
 
 ### Commands
 
