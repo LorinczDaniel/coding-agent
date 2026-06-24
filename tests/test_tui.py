@@ -32,9 +32,59 @@ class DummyUsageBar:
         self.value = value
 
 
+class DummyBanner:
+    def __init__(self):
+        self.value = None
+        self.display = False
+
+    def update(self, value):
+        self.value = value
+
+
+class DummyTodoPanel:
+    def __init__(self):
+        self.todos = []
+        self.display = False
+
+
+def _plain(renderable) -> str:
+    return renderable.plain if hasattr(renderable, "plain") else str(renderable)
+
+
 def _rendered_text(widget) -> str:
     renderable = getattr(widget, "content", "")
-    return renderable.plain if hasattr(renderable, "plain") else str(renderable)
+    return _plain(renderable)
+
+
+def _query_widgets(
+    input_widget=None,
+    usage_bar=None,
+    panel=None,
+    banner=None,
+):
+    input_widget = input_widget or DummyInput()
+    usage_bar = usage_bar or DummyUsageBar()
+    panel = panel or DummyTodoPanel()
+    banner = banner or DummyBanner()
+
+    def query_one(selector, *args):
+        if selector == "#usage-bar":
+            return usage_bar
+        if selector == "#todo-panel":
+            return panel
+        if selector == "#lesson-banner":
+            return banner
+        return input_widget
+
+    return query_one
+
+
+def _lesson_widgets(monkeypatch, app, input_widget=None, panel=None, banner=None, usage_bar=None):
+    monkeypatch.setattr(
+        app,
+        "query_one",
+        _query_widgets(input_widget=input_widget, usage_bar=usage_bar, panel=panel, banner=banner),
+    )
 
 
 def _make_app():
@@ -50,6 +100,7 @@ def _make_app():
     app._pending_agent_create = None
     app._pending_agent_switch = None
     app._current_tool_block = None
+    app._lesson = None
     app._total_in = 1234
     app._total_out = 567
     app._total_cost = 0.42
@@ -90,9 +141,11 @@ def test_clear_resets_usage(monkeypatch):
     app = _make_app()
     container = DummyContainer()
     input_widget = DummyInput()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
     reset_calls = []
 
-    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
@@ -106,6 +159,9 @@ def test_clear_resets_usage(monkeypatch):
     assert app._messages == [{"role": "system", "content": "new system coach"}]
     assert app._history == []
     assert app._history_index == 0
+    assert panel.todos == []
+    assert panel.display is False
+    assert banner.display is False
 
 
 def test_model_switch_updates_usage_bar_and_keeps_agent_label(monkeypatch):
@@ -139,8 +195,11 @@ def test_model_switch_updates_usage_bar_and_keeps_agent_label(monkeypatch):
 def test_sessions_new_resets_usage(monkeypatch):
     app = _make_app()
     container = DummyContainer()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
     reset_calls = []
 
+    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
@@ -156,11 +215,17 @@ def test_sessions_new_resets_usage(monkeypatch):
     assert app._messages == [{"role": "system", "content": "new system coach"}]
     assert app._history == []
     assert app._history_index == 0
+    assert app._lesson is None
+    assert panel.todos == []
+    assert panel.display is False
+    assert banner.display is False
 
 
 def test_sessions_load_resets_usage(monkeypatch):
     app = _make_app()
     container = DummyContainer()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
     reset_calls = []
     replayed = []
     saved = [
@@ -168,11 +233,13 @@ def test_sessions_load_resets_usage(monkeypatch):
         {"role": "user", "content": "hello"},
     ]
 
+    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
     monkeypatch.setattr(app, "_append_session_transcript", lambda messages: replayed.append(messages))
     monkeypatch.setattr("app.tui.load_session", lambda name: saved)
+    monkeypatch.setattr("app.tui.load_lesson", lambda name: None)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
     monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"new {profile_name} system")
 
@@ -188,6 +255,9 @@ def test_sessions_load_resets_usage(monkeypatch):
     assert app._history == ["hello"]
     assert app._history_index == 1
     assert replayed == [app._messages]
+    assert panel.todos == []
+    assert panel.display is False
+    assert banner.display is False
 
 
 def test_help_includes_agent_command(monkeypatch):
@@ -236,6 +306,8 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     app = _make_app()
     container = DummyContainer()
     input_widget = DummyInput()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
     appended = []
     saved = []
     reset_calls = []
@@ -248,7 +320,7 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     app._history = ["old question"]
     app._history_index = 1
 
-    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr(app, "_reset_usage", lambda: reset_calls.append(True))
@@ -277,6 +349,36 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     assert run_calls == [True]
     assert input_widget.disabled is True
     assert any("Learning goal: redis" in _rendered_text(widget) for widget in appended)
+    assert panel.display is True
+    assert panel.todos == []
+    assert banner.display is True
+    assert "Lesson: redis" in _plain(banner.value)
+    assert "Hint: 0/4 (none)" in _plain(banner.value)
+
+
+def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
+    app = _make_app()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
+    app._lesson = LessonState(
+        goal="grep",
+        milestones=("Parse command-line arguments", "Search files"),
+        current_index=1,
+        hint_level=2,
+    )
+
+    _lesson_widgets(monkeypatch, app, panel=panel, banner=banner)
+
+    app._refresh_lesson_ui()
+
+    assert banner.display is True
+    assert "Lesson: grep" in _plain(banner.value)
+    assert "Hint: 2/4 (nudge)" in _plain(banner.value)
+    assert panel.display is True
+    assert panel.todos == [
+        {"id": 1, "title": "Parse command-line arguments", "status": "completed"},
+        {"id": 2, "title": "Search files", "status": "in-progress"},
+    ]
 
 
 def test_hint_help_shows_ladder(monkeypatch):
@@ -327,11 +429,13 @@ def test_hint_with_extra_arg_shows_usage(monkeypatch):
 def test_hint_escalates_level_and_runs_agent(monkeypatch):
     app = _make_app()
     app._lesson = LessonState(goal="redis")
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
     appended = []
     run_calls = []
     saved = []
     input_widget = DummyInput()
-    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
     monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
     monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved.append((state, name)))
@@ -345,16 +449,18 @@ def test_hint_escalates_level_and_runs_agent(monkeypatch):
     assert input_widget.disabled is True
     text = "\n".join(_rendered_text(widget) for widget in appended)
     assert "Hint 1/4" in text
+    assert "Hint: 1/4 (question)" in _plain(banner.value)
 
     app._handle_hint_command("/hint")
     assert app._lesson.hint_level == 2
     assert app._messages[-1]["content"] == _hint_prompt(2)
+    assert "Hint: 2/4 (nudge)" in _plain(banner.value)
 
 
 def test_hint_level_clamps_at_max(monkeypatch):
     app = _make_app()
     app._lesson = LessonState(goal="redis", hint_level=MAX_HINT_LEVEL)
-    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    _lesson_widgets(monkeypatch, app)
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_run_agent", lambda: None)
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
@@ -370,7 +476,7 @@ def test_new_lesson_resets_hint_level(monkeypatch):
     app._lesson = LessonState(goal="redis", hint_level=3)
     container = DummyContainer()
     input_widget = DummyInput()
-    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget)
     monkeypatch.setattr(app, "_container", lambda: container)
     monkeypatch.setattr(app, "_append_sync", lambda widget: None)
     monkeypatch.setattr(app, "_reset_usage", lambda: None)
@@ -820,6 +926,67 @@ async def test_run_agent_hides_todowrite_chat_output_but_updates_panel(monkeypat
     assert saved == [(app._messages, "default")]
 
 
+async def test_run_agent_todowrite_updates_active_lesson_milestones(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    panel = DummyTodoPanel()
+    banner = DummyBanner()
+    appended = []
+    saved_sessions = []
+    saved_lessons = []
+    app._lesson = LessonState(goal="grep", hint_level=2)
+    todos = [
+        {"id": 1, "title": "Parse arguments", "status": "completed"},
+        {"id": 2, "title": "Search files", "status": "in-progress"},
+        {"id": 3, "title": "Format output", "status": "not-started"},
+    ]
+
+    async def fake_append(widget):
+        appended.append(widget)
+
+    async def fake_run_agent(
+        messages,
+        model,
+        on_text,
+        on_tool_start,
+        on_tool_result,
+        on_usage,
+        on_tool_confirm,
+        on_todo,
+        **kwargs,
+    ):
+        await on_tool_start("TodoWrite", '{"todos": []}')
+        await on_todo(todos)
+        await on_tool_result("TodoWrite", "Todo list updated", {"todos": todos})
+
+    _lesson_widgets(monkeypatch, app, input_widget=input_widget, panel=panel, banner=banner)
+    monkeypatch.setattr(app, "_append", fake_append)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved_sessions.append((messages, name)))
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved_lessons.append((state, name)))
+
+    await AgentApp._run_agent.__wrapped__(app)
+
+    rendered = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "TodoWrite" not in rendered
+    assert app._lesson == LessonState(
+        goal="grep",
+        milestones=("Parse arguments", "Search files", "Format output"),
+        current_index=1,
+        hint_level=0,
+    )
+    assert panel.todos == [
+        {"id": 1, "title": "Parse arguments", "status": "completed"},
+        {"id": 2, "title": "Search files", "status": "in-progress"},
+        {"id": 3, "title": "Format output", "status": "not-started"},
+    ]
+    assert "Lesson: grep" in _plain(banner.value)
+    assert "Hint: 0/4 (none)" in _plain(banner.value)
+    assert saved_lessons == [(app._lesson, "default")]
+    assert saved_sessions == [(app._messages, "default")]
+
+
 def test_refresh_system_prompt_replaces_existing_system_message():
     messages = [
         {"role": "system", "content": "old system"},
@@ -856,12 +1023,6 @@ def test_session_transcript_excludes_system_tools_and_empty_assistant_calls():
         ("assistant", "I'll check."),
         ("assistant", "Final answer"),
     ]
-
-
-class DummyTodoPanel:
-    def __init__(self):
-        self.todos = [{"title": "task", "status": "in-progress"}]
-        self.display = True
 
 
 def _dispatch_app(monkeypatch, appended):

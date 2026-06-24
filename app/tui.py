@@ -104,6 +104,38 @@ MAX_HINT_LEVEL = len(HINT_LEVELS)
 HIDDEN_CHAT_TOOLS = {"TodoWrite"}
 
 
+def _hint_level_display(level: int) -> str:
+    if level <= 0:
+        return f"0/{MAX_HINT_LEVEL} (none)"
+    clamped = min(level, MAX_HINT_LEVEL)
+    return f"{clamped}/{MAX_HINT_LEVEL} ({HINT_LEVELS[clamped - 1][0]})"
+
+
+def _lesson_todos(lesson: LessonState) -> list[dict]:
+    todos: list[dict] = []
+    for index, milestone in enumerate(lesson.milestones):
+        if index < lesson.current_index:
+            status = "completed"
+        elif index == lesson.current_index:
+            status = "in-progress"
+        else:
+            status = "not-started"
+        todos.append({"id": index + 1, "title": milestone, "status": status})
+    return todos
+
+
+def _current_index_from_todos(todos: list[dict], fallback: int) -> int:
+    if not todos:
+        return 0
+    for index, item in enumerate(todos):
+        if item.get("status") == "in-progress":
+            return index
+    completed_indexes = [index for index, item in enumerate(todos) if item.get("status") == "completed"]
+    if completed_indexes:
+        return min(completed_indexes[-1] + 1, len(todos))
+    return min(fallback, len(todos) - 1)
+
+
 def _hint_prompt(level: int) -> str:
     label, instruction = HINT_LEVELS[level - 1]
     return (
@@ -128,6 +160,14 @@ class AgentApp(App):
 
     #chat-log > Static {
         height: auto;
+    }
+
+    #lesson-banner {
+        height: 1;
+        padding: 0 1;
+        color: $text;
+        background: $panel;
+        display: none;
     }
 
     ToolBlock {
@@ -179,6 +219,7 @@ class AgentApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("", id="lesson-banner")
         with Horizontal(id="main-area"):
             yield VerticalScroll(id="chat-log")
             yield TodoPanel(id="todo-panel")
@@ -231,6 +272,7 @@ class AgentApp(App):
                 (" to start fresh.", "dim"),
             )))
             if self._lesson is not None:
+                self._refresh_lesson_ui()
                 self._append_sync(Static(Text.assemble(
                     ("Resumed lesson: ", "dim"),
                     (self._lesson.goal, "bold"),
@@ -281,6 +323,42 @@ class AgentApp(App):
         self._total_out = 0
         self._total_cost = 0.0
         self._update_usage_bar()
+
+    def _refresh_lesson_ui(self) -> None:
+        banner = self.query_one("#lesson-banner", Static)
+        panel = self.query_one("#todo-panel", TodoPanel)
+        if self._lesson is None:
+            banner.display = False
+            return
+
+        banner.update(Text.assemble(
+            ("Lesson: ", "dim"),
+            (self._lesson.goal, "bold"),
+            ("  Hint: ", "dim"),
+            (_hint_level_display(self._lesson.hint_level), "bold yellow"),
+        ))
+        banner.display = True
+        panel.todos = _lesson_todos(self._lesson)
+        panel.display = True
+
+    def _update_lesson_milestones(self, todos: list[dict]) -> None:
+        if self._lesson is None:
+            return
+        milestones = tuple(
+            item.get("title", "").strip()
+            for item in todos
+            if isinstance(item.get("title"), str) and item.get("title", "").strip()
+        )
+        current_index = _current_index_from_todos(todos, self._lesson.current_index)
+        hint_level = 0 if current_index != self._lesson.current_index else self._lesson.hint_level
+        self._lesson = LessonState(
+            goal=self._lesson.goal,
+            milestones=milestones,
+            current_index=current_index,
+            hint_level=hint_level,
+        )
+        save_lesson(self._lesson, self._session_name)
+        self._refresh_lesson_ui()
 
     def on_key(self, event) -> None:
         inp = self.query_one("#user-input", Input)
@@ -361,6 +439,10 @@ class AgentApp(App):
             self._history.clear()
             self._history_index = 0
             self._container().remove_children()
+            panel = self.query_one("#todo-panel", TodoPanel)
+            panel.todos = []
+            panel.display = False
+            self._refresh_lesson_ui()
             self._reset_usage()
             self._append_sync(Static(Text("Conversation cleared.", style="dim")))
             return
@@ -662,9 +744,14 @@ class AgentApp(App):
             save_session(self._messages, self._session_name)
             self._session_name = arg
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+            self._lesson = None
             self._current_tool_block = None
             self._history.clear()
             self._history_index = 0
+            panel = self.query_one("#todo-panel", TodoPanel)
+            panel.todos = []
+            panel.display = False
+            self._refresh_lesson_ui()
             self._container().remove_children()
             self._reset_usage()
             self._append_sync(Static(Text.assemble(
@@ -683,10 +770,18 @@ class AgentApp(App):
                 return
             save_session(self._messages, self._session_name)
             self._session_name = arg
+            self._lesson = load_lesson(self._session_name)
+            if self._lesson is not None:
+                self._agent_profile = COACH_PROFILE
             self._messages = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
             self._current_tool_block = None
             self._history = [m["content"] for m in saved if m.get("role") == "user"]
             self._history_index = len(self._history)
+            if self._lesson is None:
+                panel = self.query_one("#todo-panel", TodoPanel)
+                panel.todos = []
+                panel.display = False
+            self._refresh_lesson_ui()
             self._container().remove_children()
             self._reset_usage()
             user_turns = len(self._history)
@@ -762,6 +857,7 @@ class AgentApp(App):
         self._messages.append({"role": "user", "content": prompt})
         self._lesson = LessonState(goal=goal)
         save_lesson(self._lesson, self._session_name)
+        self._refresh_lesson_ui()
         self._current_tool_block = None
         self._history.clear()
         self._history.append(prompt)
@@ -810,6 +906,7 @@ class AgentApp(App):
 
         self._lesson = self._lesson.escalated(MAX_HINT_LEVEL)
         save_lesson(self._lesson, self._session_name)
+        self._refresh_lesson_ui()
         level = self._lesson.hint_level
         label = HINT_LEVELS[level - 1][0]
         prompt = _hint_prompt(level)
@@ -1031,7 +1128,10 @@ class AgentApp(App):
         async def on_todo(todos: list[dict]) -> None:
             panel = self.query_one("#todo-panel", TodoPanel)
             panel.display = True
-            panel.todos = todos
+            if self._lesson is not None:
+                self._update_lesson_milestones(todos)
+            else:
+                panel.todos = todos
 
         try:
             await run_agent(
