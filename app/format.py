@@ -16,10 +16,15 @@ def _format_tokens(n: int) -> str:
 def format_usage(
     prompt: int, completion: int, cost: float,
     model: str = "", context_window: int = 0, agent: str = "",
+    context_used: int | None = None,
 ) -> str:
+    """Render the usage bar. `prompt`/`completion` are lifetime totals; the ctx
+    segment shows `context_used` (the last request's tokens) when provided,
+    because summing per-request prompt tokens overstates context occupancy."""
     base = f"session: ↑ {prompt:,} · ↓ {completion:,} · ${cost:.4f}"
     if context_window > 0:
-        base += f" · ctx {_format_tokens(prompt)}/{_format_tokens(context_window)}"
+        used = prompt if context_used is None else context_used
+        base += f" · ctx {_format_tokens(used)}/{_format_tokens(context_window)}"
     if agent:
         base += f" · {agent}"
     if model:
