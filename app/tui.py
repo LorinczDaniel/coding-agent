@@ -1,18 +1,22 @@
 import asyncio
 import json
 import re
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.widgets import Header, Input, Static
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual import work
+from collections import deque
+from dataclasses import dataclass
+
 from rich.markup import escape
 from rich.text import Text
-from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
+from textual import work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Header, Input, Static
+
+from .agent import CONTEXT_WINDOWS, DEFAULT_MODEL, MODELS, run_agent
 from .agents import (
-    AgentProfile,
     COACH_PROFILE,
     DEFAULT_PROFILE,
+    AgentProfile,
     available_tool_names,
     get_profile,
     list_profiles,
@@ -22,12 +26,82 @@ from .agents import (
 )
 from .config import load_system_prompt
 from .format import format_usage
-from .session import (
-    clear_session, load_session, save_session, list_sessions,
-    load_lesson, save_lesson, LessonState,
-    DEFAULT_SESSION, _validate_name, export_conversation, rename_session,
+from .lessons import (
+    HINT_LEVELS,
+    MAX_HINT_LEVEL,
+    current_index_from_todos,
+    extract_learning_goal,
+    hint_level_display,
+    hint_prompt,
+    learn_goal_prompt,
+    lesson_session_name,
+    lesson_todos,
 )
-from .widgets import ToolBlock, TodoPanel, build_tool_body
+from .session import (
+    DEFAULT_SESSION,
+    LessonState,
+    clear_session,
+    export_conversation,
+    list_sessions,
+    load_lesson,
+    load_session,
+    load_session_profile,
+    message_text,
+    rename_session,
+    save_lesson,
+    save_session,
+    save_session_profile,
+    session_exists,
+    validate_session_name,
+)
+from .skills import discover_skills
+from .widgets import TodoPanel, ToolBlock, build_tool_body
+
+HIDDEN_CHAT_TOOLS = {"TodoWrite"}
+
+
+@dataclass(frozen=True)
+class Command:
+    """A slash command: dispatch prefix, handler method, and help entries."""
+
+    name: str
+    handler: str
+    help_lines: tuple[tuple[str, str], ...]
+
+
+COMMANDS: tuple[Command, ...] = (
+    Command("/help", "_handle_help_command", (
+        ("/help", "Show this help message"),
+    )),
+    Command("/clear", "_handle_clear_command", (
+        ("/clear", "Clear current conversation"),
+    )),
+    Command("/export", "_handle_export_command", (
+        ("/export [filename]", "Export conversation to Markdown"),
+    )),
+    Command("/learn", "_handle_learn_command", (
+        ("/learn <thing>", "Start a guided build-your-own lesson"),
+    )),
+    Command("/hint", "_handle_hint_command", (
+        ("/hint", "Get the next-strongest hint for the current task"),
+    )),
+    Command("/agent", "_handle_agent_command", (
+        ("/agent [name]", "Show or switch the active agent profile"),
+        ("/agent create [name]", "Create a custom agent profile"),
+    )),
+    Command("/model", "_handle_model_command", (
+        ("/model [name]", "Show or switch the active model"),
+    )),
+    Command("/skills", "_handle_skills_command", (
+        ("/skills", "List skills available to the agent"),
+    )),
+    Command("/sessions", "_handle_sessions_command", (
+        ("/sessions [list|new|load|delete|rename]", "Manage named sessions"),
+    )),
+    Command("/todo-clear", "_handle_todo_clear_command", (
+        ("/todo-clear", "Clear the todo panel"),
+    )),
+)
 
 
 def _md_to_rich(text: str) -> str:
@@ -42,20 +116,20 @@ def _format_tool_args(args: dict) -> str:
     for k, v in args.items():
         text = str(v)
         if len(text) > 200:
-            text = text[:200] + "\u2026"
+            text = text[:200] + "…"
         parts.append(f"{k}: {text}")
     return "\n".join(parts)
 
 
-def _message_text(content) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    try:
-        return json.dumps(content, indent=2)
-    except TypeError:
-        return str(content)
+def _format_args_inline(args: dict, max_value_len: int = 120) -> str:
+    """One-line summary of tool args for block headers; never floods the log."""
+    parts = []
+    for k, v in args.items():
+        text = " ".join(str(v).split())
+        if len(text) > max_value_len:
+            text = text[:max_value_len] + "…"
+        parts.append(f"{k}={text}")
+    return "  ".join(parts)
 
 
 def _session_transcript(messages: list) -> list[tuple[str, str]]:
@@ -66,7 +140,7 @@ def _session_transcript(messages: list) -> list[tuple[str, str]]:
         role = message.get("role")
         if role not in ("user", "assistant"):
             continue
-        text = _message_text(message.get("content"))
+        text = message_text(message.get("content"))
         if not text.strip():
             continue
         transcript.append((role, text))
@@ -83,81 +157,14 @@ def _refresh_system_prompt(messages: list, system_prompt: str) -> list:
     return refreshed
 
 
-def _learn_goal_prompt(goal: str) -> str:
-    return (
-        f"I want to build my own {goal}.\n\n"
-        "Create a CodeCrafters-style learning path for this goal. "
-        "Break it into 5-10 small milestones, then start with task 1 only. "
-        "For task 1, include the expected outcome, a small implementation target, "
-        "and how we will check it. Wait for my attempt before moving to task 2."
-    )
-
-
-HINT_LEVELS: tuple[tuple[str, str], ...] = (
-    ("question", "Ask me one guiding question that points me toward the next step. Do not reveal the approach."),
-    ("nudge", "Give a short nudge naming the concept or area to focus on. Still no code."),
-    ("focused example", "Show a small, focused example of the technique in isolation, not the full solution for my task."),
-    ("near-solution", "Walk me through the solution for the current task step by step, stopping just short of writing the complete final code unless I ask."),
-)
-
-MAX_HINT_LEVEL = len(HINT_LEVELS)
-HIDDEN_CHAT_TOOLS = {"TodoWrite"}
-_LEARNING_GOAL_PATTERNS = (
-    re.compile(
-        r"\b(?:i\s+)?(?:want|wanna|would like|need|am trying|i'm trying)\s+to\s+"
-        r"(?:learn|study|practice)\s+(?P<goal>[^.?!\n]+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\bhelp\s+me\s+(?:learn|study|practice)\s+(?P<goal>[^.?!\n]+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:teach|coach)\s+me\s+(?:about\s+)?(?P<goal>[^.?!\n]+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:i\s+)?(?:want|wanna|would like)\s+to\s+build\s+(?:my\s+own\s+)?(?P<goal>[^.?!\n]+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:let's|lets)\s+(?:learn|study|practice|build)\s+(?P<goal>[^.?!\n]+)",
-        re.IGNORECASE,
-    ),
-)
-
-
-def _clean_learning_goal(goal: str) -> str | None:
-    cleaned = goal.strip().strip("\"'`.,;:!? ")
-    cleaned = re.split(
-        r"\s+(?:from\s+scratch|from\s+the\s+ground\s+up|step\s+by\s+step|for\s+beginners|please|pls)\b",
-        cleaned,
-        maxsplit=1,
-        flags=re.IGNORECASE,
-    )[0]
-    cleaned = re.split(
-        r"\s+(?:because|but|so\s+that|so\s+i\s+can)\b",
-        cleaned,
-        maxsplit=1,
-        flags=re.IGNORECASE,
-    )[0]
-    cleaned = cleaned.strip().strip("\"'`.,;:!? ")
-    return cleaned or None
-
-
-def _extract_learning_goal(text: str) -> str | None:
-    for pattern in _LEARNING_GOAL_PATTERNS:
-        match = pattern.search(text.strip())
-        if match:
-            return _clean_learning_goal(match.group("goal"))
-    return None
-
-
-def _hint_level_display(level: int) -> str:
-    if level <= 0:
-        return f"0/{MAX_HINT_LEVEL} (none)"
-    clamped = min(level, MAX_HINT_LEVEL)
-    return f"{clamped}/{MAX_HINT_LEVEL} ({HINT_LEVELS[clamped - 1][0]})"
+def _user_history(messages: list) -> list[str]:
+    return [
+        content
+        for m in messages
+        if isinstance(m, dict)
+        and m.get("role") == "user"
+        and isinstance(content := m.get("content"), str)
+    ]
 
 
 def _active_context_text(profile_name: str, lesson: LessonState | None) -> Text:
@@ -172,43 +179,9 @@ def _active_context_text(profile_name: str, lesson: LessonState | None) -> Text:
         parts.extend([
             lesson.goal,
             ("  Hint: ", "dim"),
-            _hint_level_display(lesson.hint_level),
+            hint_level_display(lesson.hint_level),
         ])
     return Text.assemble(*parts)
-
-
-def _lesson_todos(lesson: LessonState) -> list[dict]:
-    todos: list[dict] = []
-    for index, milestone in enumerate(lesson.milestones):
-        if index < lesson.current_index:
-            status = "completed"
-        elif index == lesson.current_index:
-            status = "in-progress"
-        else:
-            status = "not-started"
-        todos.append({"id": index + 1, "title": milestone, "status": status})
-    return todos
-
-
-def _current_index_from_todos(todos: list[dict], fallback: int) -> int:
-    if not todos:
-        return 0
-    for index, item in enumerate(todos):
-        if item.get("status") == "in-progress":
-            return index
-    completed_indexes = [index for index, item in enumerate(todos) if item.get("status") == "completed"]
-    if completed_indexes:
-        return min(completed_indexes[-1] + 1, len(todos))
-    return min(fallback, len(todos) - 1)
-
-
-def _hint_prompt(level: int) -> str:
-    label, instruction = HINT_LEVELS[level - 1]
-    return (
-        f"I'm stuck on the current task. Give me a hint at strength {level} of "
-        f"{MAX_HINT_LEVEL} ({label}). {instruction} Keep it focused on the current "
-        "task only and stay in teaching mode."
-    )
 
 
 class AgentApp(App):
@@ -290,6 +263,27 @@ class AgentApp(App):
     }
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._pending_confirm: asyncio.Future[bool] | None = None
+        self._pending_agent_create: dict[str, object] | None = None
+        self._pending_agent_switch: str | None = None
+        self._pending_tool_blocks: deque[ToolBlock] = deque()
+        self._history: list[str] = []
+        self._history_index: int = 0
+        self._history_draft: str = ""
+        self._model = DEFAULT_MODEL
+        self._agent_profile = DEFAULT_PROFILE
+        self._session_name = DEFAULT_SESSION
+        self._lesson: LessonState | None = None
+        self._messages: list = []
+        self._safe_msg_count: int = 0
+        self._total_in = 0
+        self._total_out = 0
+        self._total_cost = 0.0
+        self._ctx_tokens = 0
+        self._ctx_warned = 0
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("", id="lesson-banner")
@@ -316,25 +310,22 @@ class AgentApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
-        self._pending_confirm: asyncio.Future[bool] | None = None
-        self._pending_agent_create: dict[str, object] | None = None
-        self._pending_agent_switch: str | None = None
-        self._current_tool_block: ToolBlock | None = None
-        self._history: list[str] = []
-        self._history_index: int = 0
-        self._history_draft: str = ""
-        self._model = DEFAULT_MODEL
-        self._agent_profile = DEFAULT_PROFILE
-        self._session_name = DEFAULT_SESSION
-        self._lesson: LessonState | None = None
         self._reset_usage()
         saved = load_session(self._session_name)
         if saved is not None:
+            stored_profile = load_session_profile(self._session_name)
+            if stored_profile is not None:
+                try:
+                    get_profile(stored_profile)
+                except ValueError:
+                    pass
+                else:
+                    self._agent_profile = stored_profile
             self._lesson = load_lesson(self._session_name)
             if self._lesson is not None:
                 self._agent_profile = COACH_PROFILE
-            self._messages: list = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
-            self._history = [m["content"] for m in saved if m.get("role") == "user"]
+            self._messages = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
+            self._history = _user_history(saved)
             self._history_index = len(self._history)
             user_turns = len(self._history)
             self._append_sync(Static(Text.assemble(
@@ -390,6 +381,7 @@ class AgentApp(App):
                 self._model,
                 self._context_window(),
                 self._agent_profile,
+                context_used=self._ctx_tokens,
             )
         )
 
@@ -397,6 +389,8 @@ class AgentApp(App):
         self._total_in = 0
         self._total_out = 0
         self._total_cost = 0.0
+        self._ctx_tokens = 0
+        self._ctx_warned = 0
         self._update_usage_bar()
 
     def _update_active_context_bar(self) -> None:
@@ -404,10 +398,34 @@ class AgentApp(App):
             _active_context_text(self._agent_profile, self._lesson)
         )
 
+    def _persist_session(self) -> None:
+        err = save_session(self._messages, self._session_name)
+        if err:
+            self._append_sync(Static(Text(f"⚠ {err}", style="bold yellow")))
+        save_session_profile(self._agent_profile, self._session_name)
+
+    def _drain_pending_tool_blocks(self) -> None:
+        while self._pending_tool_blocks:
+            self._pending_tool_blocks.popleft().remove()
+
+    def _reset_conversation_state(self) -> None:
+        """Shared reset for /clear, session switches, agent switches, and /learn."""
+        self._lesson = None
+        self._pending_tool_blocks.clear()
+        self._history.clear()
+        self._history_index = 0
+        self._history_draft = ""
+        panel = self.query_one("#todo-panel", TodoPanel)
+        panel.todos = []
+        panel.display = False
+        self._refresh_lesson_ui()
+        self._container().remove_children()
+        self._reset_usage()
+
     def _maybe_start_coach_lesson_from_message(self, text: str) -> None:
         if self._agent_profile != COACH_PROFILE or self._lesson is not None:
             return
-        goal = _extract_learning_goal(text)
+        goal = extract_learning_goal(text)
         if goal is None:
             return
         self._lesson = LessonState(goal=goal)
@@ -426,10 +444,10 @@ class AgentApp(App):
             ("Lesson: ", "dim"),
             self._lesson.goal,
             ("  Hint: ", "dim"),
-            _hint_level_display(self._lesson.hint_level),
+            hint_level_display(self._lesson.hint_level),
         ))
         banner.display = True
-        panel.todos = _lesson_todos(self._lesson)
+        panel.todos = lesson_todos(self._lesson)
         panel.display = True
         self._update_active_context_bar()
 
@@ -441,7 +459,7 @@ class AgentApp(App):
             for item in todos
             if isinstance(item.get("title"), str) and item.get("title", "").strip()
         )
-        current_index = _current_index_from_todos(todos, self._lesson.current_index)
+        current_index = current_index_from_todos(todos, self._lesson.current_index)
         hint_level = 0 if current_index != self._lesson.current_index else self._lesson.hint_level
         self._lesson = LessonState(
             goal=self._lesson.goal,
@@ -505,117 +523,14 @@ class AgentApp(App):
             self._answer_agent_switch(text)
             return
 
-        if text == "/help":
-            for line in [
-                "/help                          Show this help message",
-                "/clear                         Clear current conversation",
-                "/export [filename]             Export conversation to Markdown",
-                "/learn <thing>                 Start a guided build-your-own lesson",
-                "/hint                          Get the next-strongest hint for the current task",
-                "/agent [name]                  Show or switch the active agent profile",
-                "/agent create [name]           Create a custom agent profile",
-                "/model [name]                  Show or switch the active model",
-                "/sessions [list|new|load|delete|rename]  Manage named sessions",
-                "/todo-clear                    Clear the todo panel",
-                "",
-                "Ctrl+X to quit, Escape to interrupt the agent.",
-            ]:
-                self._append_sync(Static(Text(f"  {line}", style="dim")))
-            return
-
-        if text == "/clear":
-            self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
-            clear_session(self._session_name)
-            self._lesson = None
-            self._current_tool_block = None
-            self._history.clear()
-            self._history_index = 0
-            self._container().remove_children()
-            panel = self.query_one("#todo-panel", TodoPanel)
-            panel.todos = []
-            panel.display = False
-            self._refresh_lesson_ui()
-            self._reset_usage()
-            self._append_sync(Static(Text("Conversation cleared.", style="dim")))
-            return
-
-        if text == "/todo-clear":
-            panel = self.query_one("#todo-panel", TodoPanel)
-            panel.todos = []
-            panel.display = False
-            self._append_sync(Static(Text("Todo list cleared.", style="dim")))
-            return
-
-        if text == "/export" or text.startswith("/export "):
-            filename = text[7:].strip()
-            try:
-                path = export_conversation(self._messages, filename or None)
-            except OSError as exc:
-                self._append_sync(Static(Text.assemble(
-                    ("Export failed: ", "bold red"),
-                    (str(exc), "white"),
-                )))
-            else:
-                self._append_sync(Static(Text.assemble(
-                    ("Exported conversation to ", "dim"),
-                    (str(path), "bold"),
-                )))
-            return
-
-        if text.startswith("/sessions"):
-            self._handle_sessions_command(text)
-            return
-
-        if text == "/learn" or text.startswith("/learn "):
-            self._handle_learn_command(text)
-            return
-
-        if text == "/hint" or text.startswith("/hint "):
-            self._handle_hint_command(text)
-            return
-
-        if text == "/agent" or text.startswith("/agent "):
-            self._handle_agent_command(text)
-            return
-
-        if text == "/model" or text.startswith("/model "):
-            arg = text[7:].strip()
-            if arg == "help":
-                for line in [
-                    "/model               Show current model and available options",
-                    "/model <name>        Switch to a different model",
-                ]:
-                    self._append_sync(Static(Text(f"  {line}", style="dim")))
-                return
-            if not arg:
-                options = ", ".join(MODELS)
-                self._append_sync(Static(Text.assemble(
-                    ("Current model: ", "dim"),
-                    (self._model, "bold"),
-                    (" \u2014 available: ", "dim"),
-                    (options, "bold"),
-                )))
-            elif arg in MODELS:
-                self._model = arg
-                self._append_sync(Static(Text.assemble(
-                    ("Switched to ", "dim"),
-                    (arg, "bold"),
-                )))
-                self._update_usage_bar()
-            else:
-                options = ", ".join(MODELS)
-                self._append_sync(Static(Text.assemble(
-                    (f"Unknown model: {arg}", "bold red"),
-                    (" \u2014 available: ", "dim"),
-                    (options, "bold"),
-                )))
-            return
-
         if text.startswith("/"):
-            command = text.split()[0]
+            for command in COMMANDS:
+                if text == command.name or text.startswith(command.name + " "):
+                    getattr(self, command.handler)(text)
+                    return
             self._append_sync(Static(Text.assemble(
                 ("Unknown command: ", "bold red"),
-                (command, "bold"),
+                (text.split()[0], "bold"),
                 (". Type ", "dim"),
                 ("/help", "bold yellow"),
                 (" for the list of commands.", "dim"),
@@ -628,6 +543,93 @@ class AgentApp(App):
         self._messages.append({"role": "user", "content": text})
         self._safe_msg_count = len(self._messages)
         self._run_agent()
+
+    # --- command handlers -------------------------------------------------
+
+    def _handle_help_command(self, text: str) -> None:
+        entries = [line for command in COMMANDS for line in command.help_lines]
+        width = max(len(usage) for usage, _ in entries)
+        for usage, description in entries:
+            self._append_sync(Static(Text(f"  {usage:<{width}}  {description}", style="dim")))
+        self._append_sync(Static(Text("", style="dim")))
+        self._append_sync(Static(Text(
+            "  Ctrl+X to quit, Escape to interrupt the agent.", style="dim",
+        )))
+
+    def _handle_clear_command(self, text: str) -> None:
+        self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+        clear_session(self._session_name)
+        self._reset_conversation_state()
+        self._append_sync(Static(Text("Conversation cleared.", style="dim")))
+
+    def _handle_todo_clear_command(self, text: str) -> None:
+        panel = self.query_one("#todo-panel", TodoPanel)
+        panel.todos = []
+        panel.display = False
+        self._append_sync(Static(Text("Todo list cleared.", style="dim")))
+
+    def _handle_export_command(self, text: str) -> None:
+        filename = text[len("/export"):].strip()
+        try:
+            path = export_conversation(self._messages, filename or None)
+        except OSError as exc:
+            self._append_sync(Static(Text.assemble(
+                ("Export failed: ", "bold red"),
+                (str(exc), "white"),
+            )))
+        else:
+            self._append_sync(Static(Text.assemble(
+                ("Exported conversation to ", "dim"),
+                (str(path), "bold"),
+            )))
+
+    def _handle_model_command(self, text: str) -> None:
+        arg = text[len("/model"):].strip()
+        if arg == "help":
+            for line in [
+                "/model               Show current model and available options",
+                "/model <name>        Switch to a different model",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+        if not arg:
+            options = ", ".join(MODELS)
+            self._append_sync(Static(Text.assemble(
+                ("Current model: ", "dim"),
+                (self._model, "bold"),
+                (" — available: ", "dim"),
+                (options, "bold"),
+            )))
+        elif arg in MODELS:
+            self._model = arg
+            self._append_sync(Static(Text.assemble(
+                ("Switched to ", "dim"),
+                (arg, "bold"),
+            )))
+            self._update_usage_bar()
+        else:
+            options = ", ".join(MODELS)
+            self._append_sync(Static(Text.assemble(
+                (f"Unknown model: {arg}", "bold red"),
+                (" — available: ", "dim"),
+                (options, "bold"),
+            )))
+
+    def _handle_skills_command(self, text: str) -> None:
+        skills = discover_skills()
+        if not skills:
+            self._append_sync(Static(Text(
+                "No skills found. Add SKILL.md files under skills/<name>/ or "
+                ".claude-agent/skills/<name>/.",
+                style="dim",
+            )))
+            return
+        for skill in skills:
+            self._append_sync(Static(Text.assemble(
+                ("  ", "dim"),
+                (skill.name, "bold"),
+                (f" — {skill.description}", "dim"),
+            )))
 
     def _answer_confirm(self, text: str) -> None:
         pending = self._pending_confirm
@@ -818,7 +820,7 @@ class AgentApp(App):
                 self._append_sync(Static(Text("No saved sessions.", style="dim")))
             else:
                 for n in names:
-                    marker = " \u2190 current" if n == self._session_name else ""
+                    marker = " ← current" if n == self._session_name else ""
                     style = "bold" if n == self._session_name else "dim"
                     self._append_sync(Static(Text(f"  {n}{marker}", style=style)))
             return
@@ -827,26 +829,18 @@ class AgentApp(App):
             if not arg:
                 self._append_sync(Static(Text("Usage: /sessions new <name>", style="dim")))
                 return
-            err = _validate_name(arg)
+            err = validate_session_name(arg)
             if err:
                 self._append_sync(Static(Text(err, style="bold red")))
                 return
-            if load_session(arg) is not None:
+            if session_exists(arg):
                 self._append_sync(Static(Text(f"Session '{arg}' already exists. Use /sessions load {arg}.", style="bold red")))
                 return
             save_session(self._messages, self._session_name)
+            save_session_profile(self._agent_profile, self._session_name)
             self._session_name = arg
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
-            self._lesson = None
-            self._current_tool_block = None
-            self._history.clear()
-            self._history_index = 0
-            panel = self.query_one("#todo-panel", TodoPanel)
-            panel.todos = []
-            panel.display = False
-            self._refresh_lesson_ui()
-            self._container().remove_children()
-            self._reset_usage()
+            self._reset_conversation_state()
             self._append_sync(Static(Text.assemble(
                 ("Created and switched to session ", "dim"),
                 (arg, "bold"),
@@ -862,21 +856,25 @@ class AgentApp(App):
                 self._append_sync(Static(Text(f"Session '{arg}' not found.", style="bold red")))
                 return
             save_session(self._messages, self._session_name)
+            save_session_profile(self._agent_profile, self._session_name)
             self._session_name = arg
-            self._lesson = load_lesson(self._session_name)
-            if self._lesson is not None:
+            stored_profile = load_session_profile(arg)
+            if stored_profile is not None:
+                try:
+                    get_profile(stored_profile)
+                except ValueError:
+                    pass
+                else:
+                    self._agent_profile = stored_profile
+            lesson = load_lesson(self._session_name)
+            if lesson is not None:
                 self._agent_profile = COACH_PROFILE
             self._messages = _refresh_system_prompt(saved, load_system_prompt(self._agent_profile))
-            self._current_tool_block = None
-            self._history = [m["content"] for m in saved if m.get("role") == "user"]
-            self._history_index = len(self._history)
-            if self._lesson is None:
-                panel = self.query_one("#todo-panel", TodoPanel)
-                panel.todos = []
-                panel.display = False
+            self._reset_conversation_state()
+            self._lesson = lesson
             self._refresh_lesson_ui()
-            self._container().remove_children()
-            self._reset_usage()
+            self._history = _user_history(saved)
+            self._history_index = len(self._history)
             user_turns = len(self._history)
             self._append_sync(Static(Text.assemble(
                 ("Loaded session ", "dim"),
@@ -893,7 +891,7 @@ class AgentApp(App):
             if arg == self._session_name:
                 self._append_sync(Static(Text("Cannot delete the current session.", style="bold red")))
                 return
-            if load_session(arg) is None:
+            if not session_exists(arg):
                 self._append_sync(Static(Text(f"Session '{arg}' not found.", style="bold red")))
                 return
             clear_session(arg)
@@ -927,7 +925,7 @@ class AgentApp(App):
         self._append_sync(Static(Text("Unknown subcommand. Type /sessions help for usage.", style="dim")))
 
     def _handle_learn_command(self, text: str) -> None:
-        goal = text[6:].strip()
+        goal = text[len("/learn"):].strip()
 
         if goal == "help":
             for line in [
@@ -943,24 +941,28 @@ class AgentApp(App):
             self._append_sync(Static(Text("Usage: /learn <thing>  (try /learn redis or /learn grep)", style="dim")))
             return
 
+        # Park the current conversation under its own name, then run the
+        # lesson in a fresh session so nothing gets clobbered.
         save_session(self._messages, self._session_name)
+        save_session_profile(self._agent_profile, self._session_name)
+        old_session = self._session_name
+        self._session_name = lesson_session_name(goal, session_exists)
         self._agent_profile = COACH_PROFILE
-        prompt = _learn_goal_prompt(goal)
+        prompt = learn_goal_prompt(goal)
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
         self._messages.append({"role": "user", "content": prompt})
+        self._reset_conversation_state()
         self._lesson = LessonState(goal=goal)
         save_lesson(self._lesson, self._session_name)
         self._refresh_lesson_ui()
-        self._current_tool_block = None
-        self._history.clear()
         self._history.append(prompt)
         self._history_index = len(self._history)
-        self._history_draft = ""
-        self._container().remove_children()
-        self._reset_usage()
         self._append_sync(Static(Text.assemble(
             ("Learning goal: ", "dim"),
             (goal, "bold"),
+            ("  (session ", "dim"),
+            (self._session_name, "bold"),
+            (f"; your previous conversation is saved as {old_session})", "dim"),
         )))
         self._append_sync(Static(Text.assemble(("You: ", "bold green"), (prompt, "white"))))
         self._safe_msg_count = len(self._messages)
@@ -968,7 +970,7 @@ class AgentApp(App):
         self._run_agent()
 
     def _handle_hint_command(self, text: str) -> None:
-        arg = text[5:].strip()
+        arg = text[len("/hint"):].strip()
 
         if arg == "help":
             for line in [
@@ -1002,7 +1004,7 @@ class AgentApp(App):
         self._refresh_lesson_ui()
         level = self._lesson.hint_level
         label = HINT_LEVELS[level - 1][0]
-        prompt = _hint_prompt(level)
+        prompt = hint_prompt(level)
         self._messages.append({"role": "user", "content": prompt})
         self._history.append(prompt)
         self._history_index = len(self._history)
@@ -1017,9 +1019,8 @@ class AgentApp(App):
         self.query_one("#user-input", Input).disabled = True
         self._run_agent()
 
-
     def _handle_agent_command(self, text: str) -> None:
-        arg = text[7:].strip()
+        arg = text[len("/agent"):].strip()
 
         if arg == "help":
             for line in [
@@ -1102,18 +1103,10 @@ class AgentApp(App):
 
     def _perform_agent_switch(self, profile: AgentProfile) -> None:
         save_session(self._messages, self._session_name)
+        save_session_profile(self._agent_profile, self._session_name)
         self._agent_profile = profile.name
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
-        self._lesson = None
-        self._current_tool_block = None
-        self._history.clear()
-        self._history_index = 0
-        panel = self.query_one("#todo-panel", TodoPanel)
-        panel.todos = []
-        panel.display = False
-        self._refresh_lesson_ui()
-        self._container().remove_children()
-        self._reset_usage()
+        self._reset_conversation_state()
         self._append_sync(Static(Text.assemble(
             ("Switched to agent ", "dim"),
             (profile.name, "bold"),
@@ -1125,6 +1118,9 @@ class AgentApp(App):
 
     @work(exclusive=True)
     async def _run_agent(self) -> None:
+        await self._run_agent_turn()
+
+    async def _run_agent_turn(self) -> None:
         first_text_chunk = True
         text_buffer: list[str] = []
 
@@ -1161,12 +1157,11 @@ class AgentApp(App):
             if name in HIDDEN_CHAT_TOOLS:
                 return
             try:
-                args = json.loads(args_json)
-                args_str = "  ".join(f"{k}={v}" for k, v in args.items())
+                args_str = _format_args_inline(json.loads(args_json))
             except Exception:
                 args_str = args_json
             block = ToolBlock(name, args_str)
-            self._current_tool_block = block
+            self._pending_tool_blocks.append(block)
             await self._append(block)
 
         async def on_tool_result(name: str, result: str, args: dict) -> None:
@@ -1174,8 +1169,7 @@ class AgentApp(App):
             first_text_chunk = True
             if name in HIDDEN_CHAT_TOOLS:
                 return
-            block = self._current_tool_block
-            self._current_tool_block = None
+            block = self._pending_tool_blocks.popleft() if self._pending_tool_blocks else None
             preview, hidden, hidden_count, exit_code = build_tool_body(name, result, args)
             if block is not None:
                 await block.populate(preview, hidden, hidden_count, exit_code)
@@ -1185,30 +1179,37 @@ class AgentApp(App):
             self._total_in += prompt
             self._total_out += completion
             self._total_cost += cost
-            ctx_window = self._context_window()
+            # Context occupancy is the LAST request's tokens — each request
+            # already contains the whole conversation, so summing across tool
+            # rounds would wildly overstate it.
+            self._ctx_tokens = prompt + completion
             self._update_usage_bar()
-            if ctx_window > 0:
-                ratio = self._total_in / ctx_window
-                if ratio >= 0.9:
-                    self._append_sync(Static(Text(
-                        f"⚠ Context {ratio:.0%} full — start a new session (/sessions new <name>) to avoid silent truncation.",
-                        style="bold red",
-                    )))
-                elif ratio >= 0.75:
-                    self._append_sync(Static(Text(
-                        f"⚠ Context {ratio:.0%} full — consider starting a new session soon.",
-                        style="bold yellow",
-                    )))
+            ctx_window = self._context_window()
+            if ctx_window <= 0:
+                return
+            ratio = self._ctx_tokens / ctx_window
+            if ratio >= 0.9 and self._ctx_warned < 2:
+                self._ctx_warned = 2
+                self._append_sync(Static(Text(
+                    f"⚠ Context {ratio:.0%} full — start a new session (/sessions new <name>) to avoid silent truncation.",
+                    style="bold red",
+                )))
+            elif 0.75 <= ratio < 0.9 and self._ctx_warned < 1:
+                self._ctx_warned = 1
+                self._append_sync(Static(Text(
+                    f"⚠ Context {ratio:.0%} full — consider starting a new session soon.",
+                    style="bold yellow",
+                )))
 
         async def on_tool_confirm(name: str, args: dict, reason: str) -> bool:
             await flush_buffer()
             await self._append(Static(Text.assemble(
-                ("\u26a0 Approve ", "bold yellow"),
+                ("⚠ Approve ", "bold yellow"),
                 (name, "bold yellow"),
                 (f"? ({reason})", "yellow"),
             )))
             for line in _format_tool_args(args).splitlines():
-                await self._append(Static(Text.assemble(("\u2502 ", "dim"), (line, "dim white"))))
+                await self._append(Static(Text.assemble(("│ ", "dim"), (line, "dim white"))))
             await self._append(Static(Text("Type y to approve, n to deny.", style="dim italic")))
 
             self._pending_confirm = asyncio.get_running_loop().create_future()
@@ -1246,15 +1247,17 @@ class AgentApp(App):
             await flush_buffer()
         except asyncio.CancelledError:
             del self._messages[self._safe_msg_count:]
-            if self._current_tool_block is not None:
-                self._current_tool_block.remove()
-                self._current_tool_block = None
+            self._drain_pending_tool_blocks()
             self._append_sync(Static(Text("[interrupted]", style="dim italic")))
         except Exception as e:
-            await flush_buffer()
+            # Roll back exactly like an interrupt: a partial turn may have
+            # left an assistant tool_calls message without tool results, and
+            # persisting that would poison every subsequent API request.
+            del self._messages[self._safe_msg_count:]
+            self._drain_pending_tool_blocks()
             self._append_sync(Static(Text.assemble(("Error: ", "bold red"), (str(e), "white"))))
         finally:
-            save_session(self._messages, self._session_name)
+            self._persist_session()
             inp = self.query_one("#user-input", Input)
             inp.disabled = False
             inp.focus()

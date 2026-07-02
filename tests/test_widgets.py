@@ -1,10 +1,8 @@
-from app.widgets import build_tool_body
-
 from rich.syntax import Syntax
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from app.widgets import ToolBlock, ToolToggle, TodoPanel
+from app.widgets import TodoPanel, ToolBlock, ToolToggle, build_tool_body
 
 
 def _styles_for(text, needle: str) -> list[str]:
@@ -32,8 +30,7 @@ class _Harness(App):
         self._widgets = widgets
 
     def compose(self) -> ComposeResult:
-        for widget in self._widgets:
-            yield widget
+        yield from self._widgets
 
 
 def test_bash_tool_body_hides_stdout_but_shows_stderr():
@@ -51,6 +48,25 @@ def test_bash_tool_body_hides_stdout_but_shows_stderr():
     assert "warning" in preview.plain
     assert "│" not in preview.plain
     assert "dim red" in _styles_for(preview, "warning")
+
+
+def test_bash_tool_body_without_exit_prefix_shows_message():
+    result = "[error] Command timed out after 5s: sleep 99"
+
+    preview, hidden, hidden_count, exit_code = build_tool_body("Bash", result, {})
+
+    assert exit_code is None
+    assert preview is not None
+    assert "timed out" in preview.plain
+
+
+def test_bash_tool_body_denied_result_is_visible():
+    result = "Error: user denied this tool call. Do not retry the same call."
+
+    preview, hidden, hidden_count, exit_code = build_tool_body("Bash", result, {})
+
+    assert exit_code is None
+    assert "denied" in preview.plain
 
 
 def test_bash_tool_body_returns_no_output_for_stdout_only():

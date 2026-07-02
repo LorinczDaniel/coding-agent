@@ -177,3 +177,11 @@ cython_debug/
 # User-local agent instructions
 system.md
 .claude-agent/
+# Generated/demo artifacts
+debug.log
+snake_game/
+conversation.md
+
+# Claude Code personal settings
+.claude/settings.local.json
+.agent_config.json

@@ -1,11 +1,22 @@
-from app.agents import COACH_PROFILE, DEFAULT_PROFILE, AgentProfile, get_profile, save_custom_profile
-from app.format import format_usage
-from app.tui import (
-    AgentApp, CONTEXT_WINDOWS, MODELS,
-    _learn_goal_prompt, _refresh_system_prompt, _session_transcript,
-    MAX_HINT_LEVEL, _hint_prompt,
+from app.agents import (
+    COACH_PROFILE,
+    DEFAULT_PROFILE,
+    AgentProfile,
+    get_profile,
+    save_custom_profile,
 )
+from app.format import format_usage
+from app.lessons import MAX_HINT_LEVEL
+from app.lessons import hint_prompt as _hint_prompt
+from app.lessons import learn_goal_prompt as _learn_goal_prompt
 from app.session import LessonState
+from app.tui import (
+    CONTEXT_WINDOWS,
+    MODELS,
+    AgentApp,
+    _refresh_system_prompt,
+    _session_transcript,
+)
 
 
 class DummyInput:
@@ -98,19 +109,10 @@ def _lesson_widgets(monkeypatch, app, input_widget=None, panel=None, banner=None
 
 
 def _make_app():
+    # Pure state comes from AgentApp.__init__; tests only override what they
+    # need. Widget wiring (compose/on_mount) never runs here.
     app = AgentApp()
-    app._model = "haiku"
-    app._agent_profile = DEFAULT_PROFILE
-    app._session_name = "default"
     app._messages = [{"role": "system", "content": "sys"}]
-    app._history = []
-    app._history_index = 0
-    app._history_draft = ""
-    app._pending_confirm = None
-    app._pending_agent_create = None
-    app._pending_agent_switch = None
-    app._current_tool_block = None
-    app._lesson = None
     app._total_in = 1234
     app._total_out = 567
     app._total_cost = 0.42
@@ -210,6 +212,7 @@ def test_model_switch_updates_usage_bar_and_keeps_agent_label(monkeypatch):
         "sonnet",
         CONTEXT_WINDOWS[MODELS["sonnet"]],
         "coach",
+        context_used=0,
     )
     assert any("Switched to sonnet" in _rendered_text(widget) for widget in appended)
 
@@ -358,6 +361,7 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
         {"role": "system", "content": "old system"},
         {"role": "user", "content": "old question"},
     ], "default")]
+    assert app._session_name == "lesson-redis"
     assert app._agent_profile == COACH_PROFILE
     assert app._messages == [
         {"role": "system", "content": "system coach"},
@@ -917,7 +921,7 @@ async def test_run_agent_uses_active_profile_tool_allowlist(monkeypatch, tmp_pat
     monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
 
-    await AgentApp._run_agent.__wrapped__(app)
+    await app._run_agent_turn()
 
     assert captured == [("Read", "Grep")]
     assert saved == [(app._messages, "default")]
@@ -964,7 +968,7 @@ async def test_run_agent_hides_todowrite_chat_output_but_updates_panel(monkeypat
     monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
 
-    await AgentApp._run_agent.__wrapped__(app)
+    await app._run_agent_turn()
 
     rendered = "\n".join(_rendered_text(widget) for widget in appended)
     assert "TodoWrite" not in rendered
@@ -1015,7 +1019,7 @@ async def test_run_agent_todowrite_updates_active_lesson_milestones(monkeypatch)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved_sessions.append((messages, name)))
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved_lessons.append((state, name)))
 
-    await AgentApp._run_agent.__wrapped__(app)
+    await app._run_agent_turn()
 
     rendered = "\n".join(_rendered_text(widget) for widget in appended)
     assert "TodoWrite" not in rendered
@@ -1236,6 +1240,183 @@ def test_send_plain_message_goes_to_agent(monkeypatch):
     assert app._messages[-1] == {"role": "user", "content": "how do I parse RESP?"}
     assert app._lesson is None
     assert input_widget.disabled is True
+
+
+class DummyScrollContainer(DummyContainer):
+    def scroll_end(self, animate=False):
+        pass
+
+
+async def test_run_agent_parallel_tool_results_populate_matching_blocks(monkeypatch):
+    """All on_tool_start callbacks fire before any on_tool_result; each result
+    must land in its own block (FIFO), not the last-created one."""
+    app = _make_app()
+    input_widget = DummyInput()
+    populated = []
+
+    class FakeToolBlock:
+        def __init__(self, name, args_str):
+            self._name = name
+
+        async def populate(self, preview, hidden, hidden_count, exit_code):
+            populated.append((self._name, exit_code))
+
+        def remove(self):
+            pass
+
+    async def fake_append(widget):
+        return widget
+
+    async def fake_run_agent(
+        messages, model, on_text, on_tool_start, on_tool_result,
+        on_usage, on_tool_confirm, on_todo, **kwargs,
+    ):
+        await on_tool_start("Read", '{"file_path": "a.txt"}')
+        await on_tool_start("Bash", '{"command": "ls"}')
+        await on_tool_result("Read", "content-a", {"file_path": "a.txt"})
+        await on_tool_result("Bash", "[exit 3]\n[stderr]\nboom\n", {"command": "ls"})
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append", fake_append)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: None)
+    monkeypatch.setattr(app, "_container", lambda: DummyScrollContainer())
+    monkeypatch.setattr("app.tui.ToolBlock", FakeToolBlock)
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+
+    await app._run_agent_turn()
+
+    assert populated == [("Read", None), ("Bash", 3)]
+    assert not app._pending_tool_blocks
+
+
+async def test_run_agent_exception_rolls_back_messages_before_saving(monkeypatch):
+    """A crash mid-turn must not persist a dangling assistant tool_calls entry."""
+    app = _make_app()
+    app._messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "go"},
+    ]
+    app._safe_msg_count = 2
+    input_widget = DummyInput()
+    appended = []
+    saved = []
+
+    async def fake_run_agent(messages, model, *cbs, **kwargs):
+        messages.append({"role": "assistant", "content": None, "tool_calls": [{"id": "x"}]})
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append(list(messages)))
+
+    await app._run_agent_turn()
+
+    expected = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "go"},
+    ]
+    assert app._messages == expected
+    assert saved == [expected]
+    assert any("boom" in _rendered_text(widget) for widget in appended)
+
+
+async def test_run_agent_context_display_uses_last_turn_not_cumulative(monkeypatch):
+    app = _make_app()
+    app._total_in = 0
+    app._total_out = 0
+    app._total_cost = 0.0
+    usage_bar = DummyUsageBar()
+    input_widget = DummyInput()
+    appended = []
+
+    def query_one(selector, *args):
+        if selector == "#usage-bar":
+            return usage_bar
+        return input_widget
+
+    async def fake_run_agent(
+        messages, model, on_text, on_tool_start, on_tool_result,
+        on_usage, on_tool_confirm, on_todo, **kwargs,
+    ):
+        on_usage(100_000, 1_000, 0.01)
+        on_usage(120_000, 1_000, 0.01)
+
+    monkeypatch.setattr(app, "query_one", query_one)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+
+    await app._run_agent_turn()
+
+    assert app._total_in == 220_000
+    assert app._ctx_tokens == 121_000
+    assert "ctx 121.0k/200.0k" in usage_bar.value
+    # 121k of 200k is ~60%: cumulative accounting would have warned here
+    assert not any("Context" in _rendered_text(widget) for widget in appended)
+
+
+async def test_run_agent_context_warnings_fire_once_per_threshold(monkeypatch):
+    app = _make_app()
+    app._total_in = 0
+    app._total_out = 0
+    app._total_cost = 0.0
+    usage_bar = DummyUsageBar()
+    input_widget = DummyInput()
+    appended = []
+
+    def query_one(selector, *args):
+        if selector == "#usage-bar":
+            return usage_bar
+        return input_widget
+
+    async def fake_run_agent(
+        messages, model, on_text, on_tool_start, on_tool_result,
+        on_usage, on_tool_confirm, on_todo, **kwargs,
+    ):
+        on_usage(155_000, 0, 0.0)  # 77.5% -> yellow warning
+        on_usage(156_000, 0, 0.0)  # still 75-90% -> no repeat
+        on_usage(185_000, 0, 0.0)  # 92.5% -> red warning
+        on_usage(186_000, 0, 0.0)  # still >90% -> no repeat
+
+    monkeypatch.setattr(app, "query_one", query_one)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+
+    await app._run_agent_turn()
+
+    warnings = [w for w in appended if "Context" in _rendered_text(w)]
+    assert len(warnings) == 2
+    assert "consider starting a new session" in _rendered_text(warnings[0])
+    assert "avoid silent truncation" in _rendered_text(warnings[1])
+
+
+def test_sessions_typo_prefix_is_unknown_command(monkeypatch):
+    app = _make_app()
+    appended = []
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_handle_sessions_command", lambda text: calls.append(text))
+
+    app._send("/sessionsfoo")
+
+    assert calls == []
+    assert any("Unknown command" in _rendered_text(widget) for widget in appended)
+
+
+def test_user_history_skips_non_string_content(monkeypatch):
+    from app.tui import _user_history
+
+    assert _user_history([
+        {"role": "user", "content": "hello"},
+        {"role": "user", "content": None},
+        {"role": "user", "content": [{"type": "text", "text": "parts"}]},
+        {"role": "assistant", "content": "nope"},
+        "not a dict",
+    ]) == ["hello"]
 
 
 def test_send_learning_message_starts_coach_lesson(monkeypatch):

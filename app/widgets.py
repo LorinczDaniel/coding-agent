@@ -69,6 +69,11 @@ def build_tool_body(name: str, result: str, args: dict):
     """Return (preview_or_None, hidden_or_None, hidden_count, exit_code_or_None)."""
     if name == "Bash":
         code, body = parse_exit_code(result)
+        if code is None:
+            # No [exit N] prefix: timeout or denial message, not stream output.
+            # Render it plainly instead of hiding it as stdout.
+            preview, hidden, count = _line_renderables(result.strip().splitlines(), "white")
+            return preview, hidden, count, None
         preview, hidden, count = _bash_renderables(body)
         return preview, hidden, count, code
     if name in ("Write", "Edit") and is_diff(result):

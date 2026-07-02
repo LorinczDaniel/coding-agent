@@ -17,9 +17,8 @@ from app.agents import (
     validate_profile_name,
 )
 
-
-COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
-MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite"}
+COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Task", "Skill"}
+MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite", "Skill"}
 
 
 def _custom_profile(name: str = "reviewer") -> AgentProfile:
@@ -192,6 +191,60 @@ def test_corrupt_custom_profiles_file_is_ignored(tmp_path):
     path.write_text("not json", encoding="utf-8")
 
     assert load_custom_profiles(tmp_path) == {}
+
+
+def test_save_refuses_to_overwrite_corrupt_store(tmp_path):
+    path = _custom_profiles_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("not json {", encoding="utf-8")
+
+    err = save_custom_profile(_custom_profile(), tmp_path)
+
+    assert err is not None
+    assert "Not saving" in err
+    assert path.read_text(encoding="utf-8") == "not json {"
+
+
+def test_save_refuses_newer_store_version(tmp_path):
+    path = _custom_profiles_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"version": 99, "profiles": []}), encoding="utf-8")
+
+    err = save_custom_profile(_custom_profile(), tmp_path)
+
+    assert err is not None
+    assert "newer version" in err
+
+
+def test_save_preserves_unparseable_entries(tmp_path):
+    path = _custom_profiles_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    future_entry = {"name": "future", "title": "Future", "unknown_field": True}
+    path.write_text(json.dumps({"version": 1, "profiles": [future_entry]}), encoding="utf-8")
+
+    err = save_custom_profile(_custom_profile(), tmp_path)
+
+    assert err is None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    names = [p.get("name") for p in data["profiles"]]
+    assert "future" in names
+    assert "reviewer" in names
+
+
+def test_save_replaces_existing_profile_by_name(tmp_path):
+    assert save_custom_profile(_custom_profile(), tmp_path) is None
+    updated = AgentProfile(
+        name="reviewer",
+        title="Stricter Reviewer",
+        description="Reviews with more rigor.",
+        allowed_tools=("Read",),
+        system_addendum="Be strict.",
+    )
+
+    assert save_custom_profile(updated, tmp_path) is None
+
+    loaded = load_custom_profiles(tmp_path)
+    assert loaded == {"reviewer": updated}
 
 
 def test_get_and_list_profiles_include_custom_profiles(tmp_path, monkeypatch):

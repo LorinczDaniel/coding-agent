@@ -1,10 +1,13 @@
 import difflib
+import os
 import re
+import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _SKIP_DIRS = {".git", ".venv"}
 MAX_TOOL_OUTPUT_CHARS = 50 * 1024
@@ -226,7 +229,7 @@ GREP_TOOL = {
 
 def Read(file_path: str) -> str:
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
             return _truncate_output(f.read())
     except Exception as e:
         error_msg = f"Error reading file: {e}"
@@ -238,7 +241,7 @@ def Write(file_path: str, content: str) -> str:
     path = Path(file_path)
     try:
         old = path.read_text(encoding="utf-8") if path.exists() else ""
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         old = ""
     try:
         path.write_text(content, encoding="utf-8")
@@ -261,6 +264,8 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         content = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return f"Error: file not found: {file_path}"
+    except UnicodeDecodeError:
+        return f"Error: {file_path} is not valid UTF-8 text."
     except OSError as e:
         return f"Error reading file: {e}"
     count = content.count(old_string)
@@ -283,13 +288,39 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
 
 
 def Bash(command: str, timeout: int = 120) -> str:
+    # On POSIX, run the shell in its own process group so a timeout can kill
+    # the whole tree — plain subprocess.run only kills the shell itself, and a
+    # surviving grandchild keeps the output pipe open, hanging us forever.
+    posix = os.name == "posix"
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=posix,
+    )
     try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout,
-        )
+        stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        return f"[error] Command timed out after {timeout}s: {command}"
-    return _format_bash_output(result.returncode, result.stdout, result.stderr)
+        if posix:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+        else:
+            proc.kill()
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except Exception:
+            stdout, stderr = "", ""
+        parts = [f"[error] Command timed out after {timeout}s: {command}"]
+        if stdout:
+            parts.append("[stdout]\n" + _truncate_output(stdout, MAX_TOOL_OUTPUT_CHARS // 2))
+        if stderr:
+            parts.append("[stderr]\n" + _truncate_output(stderr, MAX_TOOL_OUTPUT_CHARS // 2))
+        return "\n".join(parts)
+    return _format_bash_output(proc.returncode or 0, stdout, stderr)
 
 
 def Glob(pattern: str, path: str = ".") -> str:
@@ -413,6 +444,78 @@ def TodoWrite(todos: list[dict]) -> str:
     return "Todo list updated:\n" + "\n".join(lines)
 
 
+# --- Skill ---
+
+SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Skill",
+        "description": (
+            "Load a skill by name and follow its instructions. Skills are reusable "
+            "instruction packs listed in your system prompt; invoke the matching one "
+            "BEFORE starting a task it covers."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact name of the skill to load."},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+
+def Skill(name: str) -> str:
+    from .skills import discover_skills, get_skill
+
+    skill = get_skill(name)
+    if skill is None:
+        available = ", ".join(s.name for s in discover_skills()) or "none"
+        return f"Error: unknown skill: {name}. Available skills: {available}."
+    return _truncate_output(f"# Skill: {skill.name}\n\n{skill.body}")
+
+
+# --- Task (subagent) ---
+
+TASK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Task",
+        "description": (
+            "Launch a subagent to handle a self-contained task in its own fresh context. "
+            "The subagent has the same tools as you (except Task) and only its final report "
+            "comes back — its intermediate tool calls stay out of your conversation. "
+            "Use it for research or multi-step side quests whose details you don't need. "
+            "The prompt must be fully self-contained: the subagent cannot see this conversation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Short (3-7 word) label for what the subagent will do.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Complete instructions for the subagent, including exactly "
+                        "what it should return in its final message."
+                    ),
+                },
+            },
+            "required": ["description", "prompt"],
+        },
+    },
+}
+
+
+def _task_placeholder_handler(args: dict[str, Any]) -> str:
+    # The agent loop intercepts Task calls and runs a subagent; this only
+    # fires if a Task call reaches plain execute_tool (e.g. inside a subagent).
+    return "Error: the Task tool is not available in this context."
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     schema: dict[str, Any]
@@ -452,6 +555,10 @@ def _todo_handler(args: dict[str, Any]) -> str:
     return TodoWrite(args["todos"])
 
 
+def _skill_handler(args: dict[str, Any]) -> str:
+    return Skill(args["name"])
+
+
 TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "Read": ToolDefinition(READ_TOOL, _read_handler),
     "Write": ToolDefinition(WRITE_TOOL, _write_handler),
@@ -460,6 +567,8 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "Glob": ToolDefinition(GLOB_TOOL, _glob_handler),
     "Grep": ToolDefinition(GREP_TOOL, _grep_handler),
     "TodoWrite": ToolDefinition(TODO_TOOL, _todo_handler),
+    "Skill": ToolDefinition(SKILL_TOOL, _skill_handler),
+    "Task": ToolDefinition(TASK_TOOL, _task_placeholder_handler),
 }
 
 

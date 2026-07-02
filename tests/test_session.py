@@ -1,37 +1,40 @@
 import json
 
 from app.session import (
+    DEFAULT_SESSION,
+    LessonState,
     _sessions_dir,
-    _validate_name,
-    save_session,
-    load_session,
+    clear_lesson,
     clear_session,
-    rename_session,
-    list_sessions,
     conversation_to_markdown,
     export_conversation,
-    save_lesson,
+    list_sessions,
     load_lesson,
-    clear_lesson,
-    LessonState,
-    DEFAULT_SESSION,
+    load_session,
+    load_session_profile,
+    rename_session,
+    save_lesson,
+    save_session,
+    save_session_profile,
+    session_exists,
+    validate_session_name,
 )
 
 
 def test_validate_name_valid():
-    assert _validate_name("feature-x") is None
-    assert _validate_name("bug_triage") is None
-    assert _validate_name("session1") is None
+    assert validate_session_name("feature-x") is None
+    assert validate_session_name("bug_triage") is None
+    assert validate_session_name("session1") is None
 
 
 def test_validate_name_empty():
-    assert _validate_name("") is not None
+    assert validate_session_name("") is not None
 
 
 def test_validate_name_invalid_chars():
-    assert _validate_name("has spaces") is not None
-    assert _validate_name("a/b") is not None
-    assert _validate_name("a.b") is not None
+    assert validate_session_name("has spaces") is not None
+    assert validate_session_name("a/b") is not None
+    assert validate_session_name("a.b") is not None
 
 
 def test_sessions_dir_uses_cwd_hash(tmp_path):
@@ -58,10 +61,65 @@ def test_load_nonexistent(tmp_path, monkeypatch):
     assert load_session("nope") is None
 
 
-def test_load_corrupt_json(tmp_path, monkeypatch):
+def test_load_corrupt_json_quarantines_file(tmp_path, monkeypatch):
     monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
     (tmp_path / "bad.json").write_text("not json", encoding="utf-8")
     assert load_session("bad") is None
+    assert not (tmp_path / "bad.json").exists()
+    assert (tmp_path / "bad.json.corrupt").read_text(encoding="utf-8") == "not json"
+
+
+def test_load_rejects_non_message_elements(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    (tmp_path / "weird.json").write_text(json.dumps(["x", 5]), encoding="utf-8")
+    assert load_session("weird") is None
+    assert (tmp_path / "weird.json.corrupt").exists()
+
+
+def test_session_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    assert session_exists("live") is False
+    save_session([{"role": "user", "content": "hi"}], "live")
+    assert session_exists("live") is True
+
+
+def test_save_and_load_session_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    assert load_session_profile("s") is None
+    assert save_session_profile("mentor", "s") is None
+    assert load_session_profile("s") == "mentor"
+
+
+def test_clear_session_removes_profile_meta(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "s")
+    save_session_profile("mentor", "s")
+    clear_session("s")
+    assert load_session_profile("s") is None
+
+
+def test_rename_session_moves_profile_meta(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "old")
+    save_session_profile("mentor", "old")
+    assert rename_session("old", "new") is None
+    assert load_session_profile("new") == "mentor"
+    assert load_session_profile("old") is None
+
+
+def test_meta_sidecar_excluded_from_list_sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: tmp_path)
+    save_session([{"role": "user", "content": "hi"}], "live")
+    save_session_profile("coach", "live")
+    assert list_sessions() == ["live"]
+
+
+def test_save_session_reports_write_failure(tmp_path, monkeypatch):
+    target = tmp_path / "blocked"
+    target.write_text("a file, not a directory", encoding="utf-8")
+    monkeypatch.setattr("app.session._sessions_dir", lambda cwd=None: target)
+    err = save_session([{"role": "user", "content": "hi"}], "s")
+    assert err is not None
 
 
 def test_load_empty_list(tmp_path, monkeypatch):
