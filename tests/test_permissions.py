@@ -61,6 +61,40 @@ def test_chmod_is_risky():
     assert bash_risky("chmod +x script.sh")[0] is True
 
 
+def test_risky_after_newline_caught():
+    risky, reason = bash_risky("echo hi\nrm -rf /")
+    assert risky is True
+    assert "rm" in reason
+
+
+def test_risky_after_single_ampersand_caught():
+    assert bash_risky("true & rm -rf /")[0] is True
+
+
+def test_command_substitution_is_risky():
+    risky, reason = bash_risky("echo $(rm -rf /)")
+    assert risky is True
+    assert "substitution" in reason
+
+
+def test_backtick_substitution_is_risky():
+    assert bash_risky("echo `rm -rf /`")[0] is True
+
+
+def test_env_assignment_prefix_does_not_hide_risky():
+    assert bash_risky("FOO=1 rm -rf /")[0] is True
+
+
+def test_absolute_path_does_not_hide_risky():
+    assert bash_risky("/bin/rm -rf /")[0] is True
+
+
+def test_wrapper_commands_do_not_hide_risky():
+    assert bash_risky("env rm -rf /")[0] is True
+    assert bash_risky("xargs rm")[0] is True
+    assert bash_risky("nohup sudo reboot")[0] is True
+
+
 # --- is_auto_allowed ---
 
 def test_auto_allow_exact_match():
@@ -83,6 +117,21 @@ def test_auto_allow_empty_list():
 def test_auto_allow_ignores_empty_strings():
     # an empty string in the list should not match every command
     assert is_auto_allowed("rm -rf /", [""]) is False
+
+
+def test_auto_allow_does_not_whitelist_chained_commands():
+    # an allowed prefix on the first segment must not allow the whole chain
+    assert is_auto_allowed("git status && sudo rm -rf /", ["git status"]) is False
+    assert is_auto_allowed("git status; rm -rf ~", ["git status"]) is False
+    assert is_auto_allowed("pytest\nrm -rf /", ["pytest"]) is False
+
+
+def test_auto_allow_all_segments_allowed():
+    assert is_auto_allowed("git status && git diff", ["git status", "git diff"]) is True
+
+
+def test_auto_allow_rejects_command_substitution():
+    assert is_auto_allowed("git status $(rm -rf /)", ["git status"]) is False
 
 
 # --- path_outside_cwd ---
@@ -167,8 +216,18 @@ def test_edit_outside_cwd_requires_confirm(tmp_path, monkeypatch):
     assert needs is True
 
 
-def test_read_never_requires_confirm():
-    needs, _ = requires_confirmation("Read", {"file_path": "/etc/passwd"}, {"auto_allow": []})
+def test_read_outside_cwd_requires_confirm(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    needs, reason = requires_confirmation(
+        "Read", {"file_path": "/etc/passwd"}, {"auto_allow": []}
+    )
+    assert needs is True
+    assert "outside" in reason
+
+
+def test_read_inside_cwd_no_confirm(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    needs, _ = requires_confirmation("Read", {"file_path": "notes.txt"}, {"auto_allow": []})
     assert needs is False
 
 

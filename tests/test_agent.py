@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
 from app.agents import COACH_ALLOWED_TOOLS
-from app.agent import run_agent, DENIED_RESULT
+from app.agent import run_agent, DENIED_RESULT, INVALID_ARGS_RESULT, parse_tool_args
 
 
 def _make_chunk(delta_content=None, delta_tool_calls=None, usage=None, has_choices=True):
@@ -599,3 +599,127 @@ async def test_usage_tracking_callback(callbacks):
         await run_agent(messages, "test-model", **callbacks)
 
     on_usage.assert_called_once_with(100, 50, 0.0025)
+
+
+# ---------------------------------------------------------------------------
+# History integrity: every tool_call must always get a matching tool result
+# ---------------------------------------------------------------------------
+
+
+def test_parse_tool_args_accepts_object():
+    assert parse_tool_args('{"file_path": "x.txt"}') == {"file_path": "x.txt"}
+
+
+def test_parse_tool_args_rejects_empty_malformed_and_non_object():
+    assert parse_tool_args("") is None
+    assert parse_tool_args('{"file_path": "x') is None
+    assert parse_tool_args("null") is None
+    assert parse_tool_args("[1, 2]") is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_args_produce_error_result_not_crash(callbacks):
+    """Truncated/empty argument JSON must not corrupt the message history."""
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_bad", name="Read", arguments='{"file_path": "x'),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    text_chunks = [
+        _make_chunk(delta_content="OK"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == "call_bad"
+    assert tool_msgs[0]["content"] == INVALID_ARGS_RESULT
+
+
+@pytest.mark.asyncio
+async def test_tool_handler_exception_becomes_error_result(callbacks):
+    """A handler crash (e.g. missing required arg) yields an error tool message."""
+    # Read with a wrong argument key -> KeyError inside the handler
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_boom", name="Read",
+                             arguments=json.dumps({"wrong_key": "x.txt"})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    text_chunks = [
+        _make_chunk(delta_content="OK"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["content"].startswith("Error executing Read")
+
+
+@pytest.mark.asyncio
+async def test_tool_call_id_and_name_can_arrive_in_later_chunks(callbacks, tmp_path):
+    """Providers may send id/name in a later delta than index 0's first chunk."""
+    f = tmp_path / "late.txt"
+    f.write_text("late data")
+
+    tool_chunks = [
+        _make_chunk(delta_tool_calls=[_tool_call_delta(0, tc_id=None, name=None, arguments="")]),
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_late", name="Read",
+                             arguments=json.dumps({"file_path": str(f)})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    text_chunks = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([tool_chunks, text_chunks])
+
+    async def fake_create(**kwargs):
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "read"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == "call_late"
+    assert tool_msgs[0]["content"] == "late data"

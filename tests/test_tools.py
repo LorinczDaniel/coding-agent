@@ -1,7 +1,7 @@
 import shlex
 import sys
 
-from app.tools import Bash, Edit, Glob, Grep, Write, TodoWrite
+from app.tools import Bash, Edit, Glob, Grep, Read, Write, TodoWrite
 
 
 # --- Glob ---
@@ -177,6 +177,15 @@ def test_edit_missing_file(tmp_path):
     assert "not found" in result
 
 
+def test_edit_binary_file_reports_error(tmp_path):
+    f = tmp_path / "blob.bin"
+    f.write_bytes(b"\x00\xff\xfe\x01")
+    result = Edit(str(f), "a", "b")
+    assert result.startswith("Error:")
+    assert "UTF-8" in result
+    assert f.read_bytes() == b"\x00\xff\xfe\x01"
+
+
 # --- Write ---
 
 def test_write_new_file_shows_additions(tmp_path):
@@ -204,6 +213,34 @@ def test_write_no_change_reports_no_change(tmp_path):
     assert "no changes" in result
 
 
+def test_write_over_binary_file_does_not_crash(tmp_path):
+    f = tmp_path / "blob.bin"
+    f.write_bytes(b"\x00\xff\xfe\x01")
+    result = Write(str(f), "now text\n")
+    assert result.startswith("--- a/")
+    assert f.read_text() == "now text\n"
+
+
+# --- Read ---
+
+def test_read_returns_file_content(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("hello\n")
+    assert Read(str(f)) == "hello\n"
+
+
+def test_read_missing_file_reports_error(tmp_path):
+    result = Read(str(tmp_path / "nope.txt"))
+    assert result.startswith("Error reading file:")
+
+
+def test_read_binary_file_does_not_crash(tmp_path):
+    f = tmp_path / "blob.bin"
+    f.write_bytes(b"\x00\xff\xfe\x01")
+    result = Read(str(f))
+    assert not result.startswith("Error")
+
+
 # --- Bash ---
 
 def test_bash_success_exit_zero():
@@ -220,6 +257,14 @@ def test_bash_stdout_after_exit_marker():
     result = Bash("echo hello")
     assert result.startswith("[exit 0]")
     assert "hello" in result
+
+
+def test_bash_timeout_kills_and_returns_partial_output():
+    code = "import sys, time; print('partial', flush=True); time.sleep(30)"
+    result = Bash(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}", timeout=1)
+
+    assert result.startswith("[error] Command timed out after 1s")
+    assert "partial" in result
 
 
 def test_bash_keeps_stdout_and_stderr_separate():
