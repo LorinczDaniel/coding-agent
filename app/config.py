@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from .agents import DEFAULT_PROFILE, get_profile
+from .skills import discover_skills, skills_prompt_section
 from .tools import TOOL_REGISTRY
 
 _BASE_PROMPT = """\
@@ -49,6 +50,11 @@ def load_system_prompt(profile_name: str = DEFAULT_PROFILE) -> str:
     context = f"You are working in `{cwd}`, {_detect_project_type(cwd)}."
     profile = get_profile(profile_name)
     parts = [_BASE_PROMPT, _tools_section(profile.allowed_tools), context]
+
+    if "Skill" in profile.allowed_tools:
+        skills = discover_skills(cwd)
+        if skills:
+            parts.append(skills_prompt_section(skills))
 
     custom_path = Path("system.md")
     if custom_path.exists():

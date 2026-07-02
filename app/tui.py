@@ -37,6 +37,7 @@ from .lessons import (
     lesson_session_name,
     lesson_todos,
 )
+from .skills import discover_skills
 from .session import (
     DEFAULT_SESSION,
     LessonState,
@@ -90,6 +91,9 @@ COMMANDS: tuple[Command, ...] = (
     )),
     Command("/model", "_handle_model_command", (
         ("/model [name]", "Show or switch the active model"),
+    )),
+    Command("/skills", "_handle_skills_command", (
+        ("/skills", "List skills available to the agent"),
     )),
     Command("/sessions", "_handle_sessions_command", (
         ("/sessions [list|new|load|delete|rename]", "Manage named sessions"),
@@ -609,6 +613,22 @@ class AgentApp(App):
                 (f"Unknown model: {arg}", "bold red"),
                 (" — available: ", "dim"),
                 (options, "bold"),
+            )))
+
+    def _handle_skills_command(self, text: str) -> None:
+        skills = discover_skills()
+        if not skills:
+            self._append_sync(Static(Text(
+                "No skills found. Add SKILL.md files under skills/<name>/ or "
+                ".claude-agent/skills/<name>/.",
+                style="dim",
+            )))
+            return
+        for skill in skills:
+            self._append_sync(Static(Text.assemble(
+                ("  ", "dim"),
+                (skill.name, "bold"),
+                (f" — {skill.description}", "dim"),
             )))
 
     def _answer_confirm(self, text: str) -> None:

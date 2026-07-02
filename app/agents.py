@@ -35,6 +35,7 @@ COACH_ALLOWED_TOOLS = (
     "Grep",
     "TodoWrite",
     "Task",
+    "Skill",
 )
 
 COACH_SYSTEM_ADDENDUM = """\
@@ -70,6 +71,7 @@ MENTOR_ALLOWED_TOOLS = (
     "Glob",
     "Grep",
     "TodoWrite",
+    "Skill",
 )
 
 MENTOR_SYSTEM_ADDENDUM = """\

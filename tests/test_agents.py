@@ -18,8 +18,8 @@ from app.agents import (
 )
 
 
-COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Task"}
-MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite"}
+COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Task", "Skill"}
+MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite", "Skill"}
 
 
 def _custom_profile(name: str = "reviewer") -> AgentProfile:

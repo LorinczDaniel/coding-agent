@@ -443,6 +443,38 @@ def TodoWrite(todos: list[dict]) -> str:
     return "Todo list updated:\n" + "\n".join(lines)
 
 
+# --- Skill ---
+
+SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Skill",
+        "description": (
+            "Load a skill by name and follow its instructions. Skills are reusable "
+            "instruction packs listed in your system prompt; invoke the matching one "
+            "BEFORE starting a task it covers."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact name of the skill to load."},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+
+def Skill(name: str) -> str:
+    from .skills import discover_skills, get_skill
+
+    skill = get_skill(name)
+    if skill is None:
+        available = ", ".join(s.name for s in discover_skills()) or "none"
+        return f"Error: unknown skill: {name}. Available skills: {available}."
+    return _truncate_output(f"# Skill: {skill.name}\n\n{skill.body}")
+
+
 # --- Task (subagent) ---
 
 TASK_TOOL = {
@@ -522,6 +554,10 @@ def _todo_handler(args: dict[str, Any]) -> str:
     return TodoWrite(args["todos"])
 
 
+def _skill_handler(args: dict[str, Any]) -> str:
+    return Skill(args["name"])
+
+
 TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "Read": ToolDefinition(READ_TOOL, _read_handler),
     "Write": ToolDefinition(WRITE_TOOL, _write_handler),
@@ -530,6 +566,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "Glob": ToolDefinition(GLOB_TOOL, _glob_handler),
     "Grep": ToolDefinition(GREP_TOOL, _grep_handler),
     "TodoWrite": ToolDefinition(TODO_TOOL, _todo_handler),
+    "Skill": ToolDefinition(SKILL_TOOL, _skill_handler),
     "Task": ToolDefinition(TASK_TOOL, _task_placeholder_handler),
 }
 
