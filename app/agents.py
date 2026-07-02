@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -208,23 +209,37 @@ def _profile_from_dict(data: Any) -> AgentProfile | None:
     return profile
 
 
-def load_custom_profiles(cwd: Path | None = None) -> dict[str, AgentProfile]:
-    path = _custom_profiles_path(cwd)
+def _read_raw_store(path: Path) -> tuple[dict | None, str | None]:
+    """Read the raw profile store. Returns (data, error) — data is None on error.
+
+    A missing file is a valid empty store; an unreadable, unparseable, or
+    newer-versioned file is an error so callers never rebuild the store from
+    partial data.
+    """
     if not path.exists():
-        return {}
+        return {"version": PROFILE_STORE_VERSION, "profiles": []}, None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"Could not read {path}: {exc}"
+    if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
+        return None, f"Profile store {path} has an unexpected format."
+    version = data.get("version", PROFILE_STORE_VERSION)
+    if isinstance(version, int) and version > PROFILE_STORE_VERSION:
+        return None, (
+            f"Profile store {path} was written by a newer version "
+            f"(store v{version}, supported v{PROFILE_STORE_VERSION})."
+        )
+    return data, None
 
-    if not isinstance(data, dict):
-        return {}
-    raw_profiles = data.get("profiles")
-    if not isinstance(raw_profiles, list):
+
+def load_custom_profiles(cwd: Path | None = None) -> dict[str, AgentProfile]:
+    data, err = _read_raw_store(_custom_profiles_path(cwd))
+    if err or data is None:
         return {}
 
     profiles: dict[str, AgentProfile] = {}
-    for raw_profile in raw_profiles:
+    for raw_profile in data["profiles"]:
         profile = _profile_from_dict(raw_profile)
         if profile is None or profile.name in PROFILES:
             continue
@@ -237,17 +252,33 @@ def save_custom_profile(profile: AgentProfile, cwd: Path | None = None) -> str |
     if err:
         return err
 
-    profiles = load_custom_profiles(cwd)
-    profiles[profile.name] = profile
-    data = {
-        "version": PROFILE_STORE_VERSION,
-        "profiles": [_profile_to_dict(profiles[name]) for name in sorted(profiles)],
-    }
     path = _custom_profiles_path(cwd)
+    data, load_err = _read_raw_store(path)
+    if load_err or data is None:
+        # Never rewrite a store we could not fully read — that would silently
+        # delete every profile the read failed to recover.
+        return f"Not saving: {load_err}"
+
+    # Replace by name but keep raw entries we cannot parse; they may belong to
+    # a newer format or a hand edit and must survive a rewrite.
+    raw_profiles = [
+        raw for raw in data["profiles"]
+        if not (isinstance(raw, dict) and raw.get("name") == profile.name)
+    ]
+    raw_profiles.append(_profile_to_dict(profile))
+    raw_profiles.sort(key=lambda raw: raw.get("name", "") if isinstance(raw, dict) else "")
+
+    payload = {"version": PROFILE_STORE_VERSION, "profiles": raw_profiles}
+    tmp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
     except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         return f"Could not save agent profile: {exc}"
     return None
 

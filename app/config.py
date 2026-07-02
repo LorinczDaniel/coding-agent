@@ -1,16 +1,10 @@
 from pathlib import Path
 
 from .agents import DEFAULT_PROFILE, get_profile
+from .tools import TOOL_REGISTRY
 
 _BASE_PROMPT = """\
-You are a coding assistant running in a terminal. You have access to these tools:
-
-- **Read** — read the full contents of a file
-- **Write** — create a new file or fully overwrite one
-- **Edit** — replace an exact string in an existing file (preferred for modifications)
-- **Bash** — execute a shell command and return its output
-- **Glob** — find files matching a pattern
-- **Grep** — search file contents with a regex
+You are a coding assistant running in a terminal.
 
 Guidelines:
 - Read relevant files before making changes
@@ -18,6 +12,22 @@ Guidelines:
 - For Edit, `old_string` must match exactly (whitespace counts); include enough surrounding context to make it unique
 - After completing a task, briefly explain what you did and why\
 """
+
+
+def _tool_summary(name: str) -> str:
+    description = TOOL_REGISTRY[name].schema["function"]["description"]
+    return description.split(". ")[0].rstrip(".")
+
+
+def _tools_section(allowed_tools: tuple[str, ...]) -> str:
+    lines = [
+        f"- **{name}** — {_tool_summary(name)}"
+        for name in allowed_tools
+        if name in TOOL_REGISTRY
+    ]
+    if not lines:
+        return "You have no tools available; answer from knowledge alone."
+    return "You have access to these tools:\n" + "\n".join(lines)
 
 
 def _detect_project_type(cwd: Path) -> str:
@@ -38,14 +48,14 @@ def load_system_prompt(profile_name: str = DEFAULT_PROFILE) -> str:
     cwd = Path.cwd()
     context = f"You are working in `{cwd}`, {_detect_project_type(cwd)}."
     profile = get_profile(profile_name)
-    parts = [_BASE_PROMPT, context]
+    parts = [_BASE_PROMPT, _tools_section(profile.allowed_tools), context]
 
     custom_path = Path("system.md")
     if custom_path.exists():
         try:
             custom = custom_path.read_text(encoding="utf-8").strip()
-        except OSError as e:
-            raise RuntimeError(f"Could not read system.md: {e}") from e
+        except OSError:
+            custom = ""
         if custom:
             parts.append(custom)
 

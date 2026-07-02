@@ -55,12 +55,27 @@ def test_load_system_prompt_includes_custom_profile_addendum(tmp_path, monkeypat
     assert COACH_SYSTEM_ADDENDUM.strip() not in result
 
 
-def test_unreadable_system_md_raises(tmp_path, monkeypatch):
+def test_unreadable_system_md_is_skipped(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "system.md").write_text("content", encoding="utf-8")
+    (tmp_path / "system.md").write_text("SECRET-MARKER", encoding="utf-8")
     with patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
-        with pytest.raises(RuntimeError, match="Could not read system.md"):
-            load_system_prompt()
+        result = load_system_prompt()
+    assert "SECRET-MARKER" not in result
+    assert result.startswith(_BASE_PROMPT)
+    assert result.endswith(COACH_SYSTEM_ADDENDUM.strip())
+
+
+def test_prompt_lists_only_profile_tools(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    coach_prompt = load_system_prompt("coach")
+    mentor_prompt = load_system_prompt("mentor")
+
+    for tool in ("**Read**", "**Write**", "**Edit**", "**Bash**", "**TodoWrite**"):
+        assert tool in coach_prompt
+    assert "**Read**" in mentor_prompt
+    assert "**Glob**" in mentor_prompt
+    for tool in ("**Write**", "**Edit**", "**Bash**"):
+        assert tool not in mentor_prompt
 
 
 def test_detect_python_project(tmp_path):

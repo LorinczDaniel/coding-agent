@@ -25,7 +25,7 @@ from .format import format_usage
 from .session import (
     clear_session, load_session, save_session, list_sessions,
     load_lesson, save_lesson, LessonState,
-    DEFAULT_SESSION, _validate_name, export_conversation, rename_session,
+    DEFAULT_SESSION, validate_session_name, export_conversation, rename_session,
 )
 from .widgets import ToolBlock, TodoPanel, build_tool_body
 
@@ -827,7 +827,7 @@ class AgentApp(App):
             if not arg:
                 self._append_sync(Static(Text("Usage: /sessions new <name>", style="dim")))
                 return
-            err = _validate_name(arg)
+            err = validate_session_name(arg)
             if err:
                 self._append_sync(Static(Text(err, style="bold red")))
                 return
