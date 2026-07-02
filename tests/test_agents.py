@@ -17,7 +17,6 @@ from app.agents import (
     validate_profile_name,
 )
 
-
 COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Task", "Skill"}
 MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite", "Skill"}
 

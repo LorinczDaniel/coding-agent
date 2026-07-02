@@ -4,9 +4,10 @@ import re
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _SKIP_DIRS = {".git", ".venv"}
 MAX_TOOL_OUTPUT_CHARS = 50 * 1024

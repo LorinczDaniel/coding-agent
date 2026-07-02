@@ -1,11 +1,11 @@
 import json
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agent import DENIED_RESULT, INVALID_ARGS_RESULT, parse_tool_args, run_agent
 from app.agents import COACH_ALLOWED_TOOLS
-from app.agent import run_agent, DENIED_RESULT, INVALID_ARGS_RESULT, parse_tool_args
 
 
 def _make_chunk(delta_content=None, delta_tool_calls=None, usage=None, has_choices=True):

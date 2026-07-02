@@ -1,8 +1,7 @@
 import shlex
 import sys
 
-from app.tools import Bash, Edit, Glob, Grep, Read, Write, TodoWrite
-
+from app.tools import Bash, Edit, Glob, Grep, Read, TodoWrite, Write
 
 # --- Glob ---
 

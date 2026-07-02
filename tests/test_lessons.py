@@ -8,7 +8,6 @@ from app.lessons import (
     lesson_session_name,
 )
 
-
 # --- extract_learning_goal ---
 
 def test_extract_goal_want_to_learn():

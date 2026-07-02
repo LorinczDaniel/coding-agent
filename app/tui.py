@@ -12,11 +12,11 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Input, Static
 
-from .agent import run_agent, MODELS, CONTEXT_WINDOWS, DEFAULT_MODEL
+from .agent import CONTEXT_WINDOWS, DEFAULT_MODEL, MODELS, run_agent
 from .agents import (
-    AgentProfile,
     COACH_PROFILE,
     DEFAULT_PROFILE,
+    AgentProfile,
     available_tool_names,
     get_profile,
     list_profiles,
@@ -37,7 +37,6 @@ from .lessons import (
     lesson_session_name,
     lesson_todos,
 )
-from .skills import discover_skills
 from .session import (
     DEFAULT_SESSION,
     LessonState,
@@ -55,7 +54,8 @@ from .session import (
     session_exists,
     validate_session_name,
 )
-from .widgets import ToolBlock, TodoPanel, build_tool_body
+from .skills import discover_skills
+from .widgets import TodoPanel, ToolBlock, build_tool_body
 
 HIDDEN_CHAT_TOOLS = {"TodoWrite"}
 

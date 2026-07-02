@@ -28,7 +28,7 @@ class LessonState:
         }
 
     @classmethod
-    def from_dict(cls, data) -> "LessonState | None":
+    def from_dict(cls, data) -> LessonState | None:
         if not isinstance(data, dict):
             return None
         goal = data.get("goal")
@@ -57,11 +57,11 @@ class LessonState:
             hint_level=hint_level,
         )
 
-    def escalated(self, max_level: int) -> "LessonState":
+    def escalated(self, max_level: int) -> LessonState:
         """Return a copy with the hint level bumped by one, clamped at max_level."""
         return replace(self, hint_level=min(self.hint_level + 1, max_level))
 
-    def with_task(self, index: int) -> "LessonState":
+    def with_task(self, index: int) -> LessonState:
         """Return a copy advanced to a task, resetting the hint level."""
         return replace(self, current_index=index, hint_level=0)
 

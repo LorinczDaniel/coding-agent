@@ -1,10 +1,8 @@
-from app.widgets import build_tool_body
-
 from rich.syntax import Syntax
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from app.widgets import ToolBlock, ToolToggle, TodoPanel
+from app.widgets import TodoPanel, ToolBlock, ToolToggle, build_tool_body
 
 
 def _styles_for(text, needle: str) -> list[str]:
@@ -32,8 +30,7 @@ class _Harness(App):
         self._widgets = widgets
 
     def compose(self) -> ComposeResult:
-        for widget in self._widgets:
-            yield widget
+        yield from self._widgets
 
 
 def test_bash_tool_body_hides_stdout_but_shows_stderr():

@@ -1,12 +1,12 @@
 import json
+
 from app.permissions import (
     bash_risky,
     is_auto_allowed,
+    load_config,
     path_outside_cwd,
     requires_confirmation,
-    load_config,
 )
-
 
 # --- bash_risky ---
 

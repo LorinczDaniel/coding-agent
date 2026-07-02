@@ -1,7 +1,7 @@
 import shlex
 import sys
 
-from app.tools import Bash, MAX_TOOL_OUTPUT_CHARS, Read
+from app.tools import MAX_TOOL_OUTPUT_CHARS, Bash, Read
 
 
 def test_read_truncates_large_file_output(tmp_path):

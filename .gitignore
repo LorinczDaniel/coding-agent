@@ -181,3 +181,7 @@ system.md
 debug.log
 snake_game/
 conversation.md
+
+# Claude Code personal settings
+.claude/settings.local.json
+.agent_config.json

@@ -1,11 +1,22 @@
-from app.agents import COACH_PROFILE, DEFAULT_PROFILE, AgentProfile, get_profile, save_custom_profile
-from app.format import format_usage
-from app.lessons import MAX_HINT_LEVEL, hint_prompt as _hint_prompt, learn_goal_prompt as _learn_goal_prompt
-from app.tui import (
-    AgentApp, CONTEXT_WINDOWS, MODELS,
-    _refresh_system_prompt, _session_transcript,
+from app.agents import (
+    COACH_PROFILE,
+    DEFAULT_PROFILE,
+    AgentProfile,
+    get_profile,
+    save_custom_profile,
 )
+from app.format import format_usage
+from app.lessons import MAX_HINT_LEVEL
+from app.lessons import hint_prompt as _hint_prompt
+from app.lessons import learn_goal_prompt as _learn_goal_prompt
 from app.session import LessonState
+from app.tui import (
+    CONTEXT_WINDOWS,
+    MODELS,
+    AgentApp,
+    _refresh_system_prompt,
+    _session_transcript,
+)
 
 
 class DummyInput:

@@ -1,6 +1,6 @@
 # claude-agent
 
-A terminal-based AI coding assistant with a live chat UI. Powered by Claude via OpenRouter, it can read files, write files, and run shell commands — all from a single conversation.
+A terminal-based AI coding assistant with a live chat UI. Powered by Claude via OpenRouter, it can read files, write files, run shell commands, spawn subagents, and follow reusable skills — all from a single conversation.
 
 ---
 
@@ -19,39 +19,56 @@ claude-agent gives you a conversational interface to an AI that can actually act
 | **Glob** | Finds files matching a glob pattern (e.g. `**/*.py`) |
 | **Grep** | Searches file contents with a regex |
 | **TodoWrite** | Tracks multi-step plans with a todo panel |
+| **Task** | Spawns a subagent with a fresh context for a self-contained side quest; only its final report comes back |
+| **Skill** | Loads a `SKILL.md` instruction pack by name and follows it |
 
-The agent can chain these freely. Ask it to "refactor this file" and it will read it, figure out the changes, write the result, and confirm — without you doing anything in between.
+The agent can chain these freely. Ask it to "refactor this file" and it will read it, figure out the changes, write the result, and confirm — without you doing anything in between. Independent tool calls in one turn run in parallel.
+
+### Subagents (Task)
+
+When the agent hits a self-contained side quest — "find every caller of X", "summarize this directory" — it can delegate to a **subagent**: a nested agent conversation with its own fresh context and the same tools (minus Task, so no infinite nesting). Only the subagent's final report enters the parent conversation, keeping the main context small. Subagent token usage counts toward the session totals, and risky commands inside a subagent still hit the same permission prompts.
+
+### Skills
+
+A **skill** is a reusable instruction pack: a `SKILL.md` file with a tiny frontmatter block and markdown instructions.
+
+```markdown
+---
+name: code-review
+description: Review a diff or file for bugs, risks, and clarity.
+---
+
+# Code review
+1. Read every file under review in full…
+```
+
+Skills are discovered from `skills/<name>/SKILL.md` (committed, shared with the project) and `.claude-agent/skills/<name>/SKILL.md` (personal) under the working directory. The agent sees the available skill names and descriptions in its system prompt and loads the matching one with the Skill tool before starting a task it covers. List them with `/skills`. This repo ships a `code-review` skill as a working example.
 
 ### Project context
 
-On startup the agent is told its working directory and a guess at the project type (Python / Node / Rust / Go / Java, inferred from marker files like `pyproject.toml`, `package.json`, etc.). This means it knows things like "you're in `/home/me/my-project`, a Python project" without you having to spell it out every time.
+On startup the agent is told its working directory and a guess at the project type (Python / Node / Rust / Go / Java, inferred from marker files like `pyproject.toml`, `package.json`, etc.), plus the tools its active profile actually allows and any discovered skills.
 
 ### UI features
 
 - **Streaming responses** — text appears as the model generates it, not all at once
-- **Inline tool output** — tool calls are shown as unframed, styled output as they happen:
-  ```
-  Bash
-  ls -la
-  exit 0
-  ```
+- **Inline tool output** — tool calls are shown as unframed, styled output as they happen
 - **Rich tool output** —
-  - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions) instead of dumping the whole file; new files render as all-additions
+  - `Write` / `Edit` show a **unified diff** of what changed (green additions, red deletions); new files render as all-additions
   - `Read` output is **syntax-highlighted** (lexer guessed from the file extension) with line numbers
-  - `Bash` output hides **stdout** in the chat, shows **stderr** when present, and shows the command's **exit code** on a final line (green for 0, red otherwise)
+  - `Bash` output hides **stdout** in the chat, shows **stderr** when present, and shows the command's **exit code** on a final line (green for 0, red otherwise); timeouts and denials render visibly
   - `TodoWrite` updates the todo panel without dumping its arguments or result into the chat
   - `Read` and `Bash` results over 50KB are truncated before rendering, keeping the beginning and end with an explicit truncated marker
   - long blocks show the first 15 lines and a clickable **`▸ show N more lines`** toggle to expand/collapse the rest
 - **Markdown rendering** — bold, inline code, and other formatting renders properly in the terminal
 - **Multi-turn conversation** — the full message history is kept in memory for the session, so you can follow up, correct, or ask for more
-- **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory. You can create, switch, rename, and delete named sessions to keep separate threads (e.g. "feature-x" vs "bug-triage") in the same repo. Auto-saved after every agent turn; auto-loaded on startup.
-- **Markdown export** — `/export [filename]` writes the current user/agent conversation to a Markdown file for documentation or sharing, excluding raw tool calls and tool output.
-- **Token + cost tracking** — a status bar above the input shows lifetime tokens in / out and total spend in USD, updated after every agent turn (e.g. `session: ↑ 12,400 · ↓ 3,100 · $0.0420`). Cost is computed by OpenRouter at the model's current rate, so no hardcoded pricing to maintain. Totals persist through `/clear` (the dollars don't refund) and reset only on app restart. A separate line below it shows the active profile and lesson without changing the usage/cost line.
-- **Active lesson status** — lessons started with `/learn <thing>` or explicit Coach requests like `I want to learn C++` show a banner with the active goal and current hint level, plus milestones in the docked side panel.
+- **Named sessions** — conversations are stored in `~/.claude-agent/sessions/` keyed by working directory, saved **atomically** after every agent turn and auto-loaded on startup. Each session remembers which agent profile it was created under and restores it on load. Corrupt session files are quarantined (`.corrupt`) instead of silently overwritten.
+- **Markdown export** — `/export [filename]` writes the current user/agent conversation to a Markdown file, excluding raw tool calls and tool output.
+- **Token + cost tracking** — a status bar shows lifetime tokens in / out and total spend in USD (computed by OpenRouter, so no hardcoded pricing), plus a `ctx` segment showing how full the model's context window actually is (measured from the last request, not a running total). Warnings appear once at 75% and 90%.
+- **Active lesson status** — lessons show a banner with the active goal and current hint level, plus milestones in the docked side panel.
 - **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
-- **Agent profiles** — the agent runs under a named *profile* that sets its persona and which tools it may use. The built-in **Coach** profile (the default) is a CodeCrafters-style learning coach. Switch profiles with `/agent <name>`, or define your own with `/agent create`. Each profile keeps its own conversation, so switching starts a fresh thread.
-- **Guided learning (`/learn`)** — `/learn <thing>` kicks off a build-your-own-X lesson under the Coach profile. The Coach turns your goal into 5–10 small milestones, hands you one task at a time, inspects your code and command output, and offers graduated hints (question → nudge → focused example → near-solution) so you stay in control of the build.
-- **Tool permission gates** — before the agent runs a destructive `Bash` command (`rm`, `git push`, `sudo`, `chmod`, `... | sh`, etc.) or a `Write` / `Edit` that targets a path outside the current working directory, the agent pauses and asks for approval inline in the conversation. Type `y` to approve or `n` to deny in the normal input box — denying tells the model "user denied this; do not retry" so it adapts instead of looping. (`Esc` still interrupts the whole turn.)
+- **Agent profiles** — the agent runs under a named *profile* that sets its persona and which tools it may use. The built-in **Coach** profile (the default) is a CodeCrafters-style learning coach; **Mentor** is a read-only guide. Switch with `/agent <name>`, or define your own with `/agent create`.
+- **Guided learning (`/learn`)** — `/learn <thing>` starts a build-your-own-X lesson in a fresh `lesson-<thing>` session (your current conversation is kept). The Coach turns your goal into 5–10 milestones, hands you one task at a time, and offers graduated hints (`/hint`).
+- **Tool permission gates** — risky `Bash` commands and any `Read`/`Write`/`Edit` touching a path outside the working directory pause for inline y/n approval. Denying tells the model not to retry.
 
 ### Commands
 
@@ -60,12 +77,14 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/help` | Show all available commands |
 | `/clear` | Clear the current conversation |
 | `/export [filename]` | Export the current conversation to Markdown |
-| `/model` | Show current model and available options |
-| `/model <name>` | Switch to a different model (e.g. `haiku`, `sonnet`) |
+| `/learn <thing>` | Start a guided build-your-own lesson with the Coach (e.g. `/learn grep`) |
+| `/hint` | Get the next-strongest hint for the current lesson task |
 | `/agent` | Show the current agent profile and available profiles |
 | `/agent <name>` | Switch to an agent profile (starts a fresh conversation) |
 | `/agent create [name]` | Create a custom agent profile interactively |
-| `/learn <thing>` | Start a guided build-your-own lesson with the Coach (e.g. `/learn grep`) |
+| `/model` | Show current model and available options |
+| `/model <name>` | Switch to a different model (e.g. `haiku`, `sonnet`) |
+| `/skills` | List skills available to the agent |
 | `/sessions` | List all sessions for this directory |
 | `/sessions new <name>` | Create and switch to a new named session |
 | `/sessions load <name>` | Switch to an existing session |
@@ -73,11 +92,16 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/sessions delete <name>` | Delete a saved session |
 | `/todo-clear` | Clear the todo panel |
 
-Every command also supports a `help` subcommand (e.g. `/model help`, `/sessions help`).
+Most commands also support a `help` subcommand (e.g. `/model help`, `/sessions help`).
 
 ### Keyboard shortcuts
 
-Use <kbd>Ctrl</kbd>+<kbd>X</kbd> to quit, or <kbd>Esc</kbd> to interrupt the agent mid-turn.
+| Key | Action |
+|---|---|
+| <kbd>Enter</kbd> | Send message |
+| <kbd>Esc</kbd> | Interrupt the running agent. Drops any partial response, keeps your last user message, and re-enables input so you can steer or retry. |
+| <kbd>Ctrl</kbd>+<kbd>X</kbd> | Quit |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Recall input history |
 
 ---
 
@@ -87,119 +111,28 @@ Use <kbd>Ctrl</kbd>+<kbd>X</kbd> to quit, or <kbd>Esc</kbd> to interrupt the age
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - An [OpenRouter](https://openrouter.ai) API key
 
----
-
 ## Setup
-
-**1. Clone the repo**
 
 ```bash
 git clone https://github.com/LorinczDaniel/coding-agent.git
 cd coding-agent
-```
-
-**2. Install dependencies**
-
-```bash
 uv sync
+cp .env.example .env   # then add your OpenRouter key
 ```
-
-**3. Create a `.env` file**
-
-```bash
-cp .env.example .env   # or create it manually
-```
-
-Add your OpenRouter key:
-
-```
-OPENROUTER_API_KEY=sk-or-...
-```
-
-Optionally override the base URL (defaults to OpenRouter):
-
-```
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-```
-
----
 
 ## Running
 
 ```bash
-uv run -m app.main
+uv run claude-agent      # or: uv run -m app.main
 ```
 
 The Textual TUI opens in your terminal. The input box at the bottom is focused automatically.
 
-The app inherits your terminal font. In VS Code, this workspace recommends Cascadia Code first, with JetBrains Mono and Fira Code as fallbacks; install one of those fonts or set your preferred terminal font if the default terminal face feels too plain.
-
----
-
-## Usage
-
-Type a message and press **Enter** or click **Send**. The agent streams its response and shows any tool calls inline. Input is locked while the agent is working and re-enabled when it finishes.
-
-### Keybindings
-
-| Key | Action |
-|---|---|
-| <kbd>Enter</kbd> | Send message |
-| <kbd>Esc</kbd> | Interrupt the running agent. Drops any partial response from the conversation, keeps your last user message, and re-enables input so you can steer or retry. |
-| <kbd>Ctrl</kbd>+<kbd>X</kbd> | Quit |
-
-### Commands
-
-| Command | Action |
-|---|---|
-| `/clear` | Reset the conversation back to just the system prompt and delete the saved session file. Useful when the context gets long, expensive, or off-track. |
-| `/export [filename]` | Write the current conversation to Markdown. If no filename is provided, exports to `conversation.md`. |
-
-### Example prompts
-
-**Explore a codebase**
-```
-What files are in this project and what does each one do?
-```
-
-**Read and explain code**
-```
-Read app/agent.py and explain how the streaming loop works
-```
-
-**Make a change**
-```
-Add error handling to the Bash tool so it returns the exit code alongside the output
-```
-
-**Run commands**
-```
-Run the tests and tell me if anything is failing
-```
-
-**Multi-step tasks**
-```
-Find all TODO comments in the codebase, then create a TODO.md that lists them by file
-```
-
-**Start a guided lesson**
-```
-/learn grep
-```
-
-**Build your own Redis**
-```
-/learn redis
-```
-
-**Ask the Coach for a hint**
-```
-I'm stuck on parsing the RESP protocol — can you give me a hint?
-```
-
 ---
 
 ## Configuration
+
+### Permission prompts (`.agent_config.json`)
 
 Drop an optional `.agent_config.json` in the project root to tune permission prompts:
 
@@ -209,61 +142,22 @@ Drop an optional `.agent_config.json` in the project root to tune permission pro
 }
 ```
 
-`auto_allow` is a list of **whole-word prefixes**. A command is allowed without prompting if its leading tokens match one of these prefixes (word-bounded — `chm` will NOT match `chmod`). With no config file or an empty list, the built-in risky list is the only thing that prompts.
+`auto_allow` is a list of **whole-word prefixes**. A command runs without prompting only when **every** segment of the command (split on `&&`, `||`, `;`, `|`, `&`, and newlines) matches one of these prefixes — an allowed first segment does not whitelist whatever is chained after it. Commands containing `$( )` or backtick substitution always prompt, since prefix analysis can't see inside them.
 
-The built-in risky list (always prompts unless overridden by `auto_allow`):
-`rm`, `rmdir`, `git push`, `git reset --hard`, `git checkout --`, `git clean -f*`, `sudo`, `shutdown`, `reboot`, `halt`, `mkfs`, `dd`, `chmod`, `chown`, `kill`, `killall`, `pkill`, `npm publish`, `pip uninstall`, `uv remove`, plus any `... | sh|bash|zsh|fish` pipe.
+The built-in risky list (always prompts unless every segment is auto-allowed):
+`rm`, `rmdir`, `git push`, `git reset --hard`, `git checkout --`, `git clean -f*`, `sudo`, `shutdown`, `reboot`, `halt`, `mkfs`, `dd`, `chmod`, `chown`, `kill`, `killall`, `pkill`, `npm publish`, `pip uninstall`, `uv remove`, plus any `… | sh|bash|zsh|fish` pipe. Env-var prefixes (`FOO=1 rm …`), absolute paths (`/bin/rm`), and wrappers (`env`, `xargs`, `nohup`, …) don't hide a risky command.
 
-For `Write` and `Edit`, any `file_path` that resolves outside the current working directory also prompts.
+For `Read`, `Write`, and `Edit`, any `file_path` resolving outside the current working directory also prompts.
 
----
+The gate is a **guardrail, not a sandbox**: determined obfuscation (e.g. `python -c "import os; os.remove(...)"`) still slips through. It catches obvious foot-guns.
 
-## Model
+### Custom system prompt (`system.md`)
 
-The agent uses `anthropic/claude-haiku-4.5` via OpenRouter by default. To change the model, edit the `model` field in `app/agent.py`:
+Copy `system.md.example` to `system.md` to append personal instructions to the agent's system prompt.
 
-```python
-model="anthropic/claude-sonnet-4-5",  # more capable, higher cost
-```
+### Model
 
-Any OpenAI-compatible model available on OpenRouter will work.
-
----
-
-## Agents & the Coach workflow
-
-Every conversation runs under an **agent profile** — a named persona plus the set of tools that persona is allowed to use. Switching profiles starts a fresh conversation, so each profile keeps its own thread.
-
-Use `/agent` to inspect and switch profiles:
-
-```
-/agent                 # show the current profile and all available profiles
-/agent <name>          # switch to a profile (fresh conversation)
-/agent create [name]   # define a custom profile interactively
-```
-
-### The Coach
-
-**Coach** is the built-in default profile — a CodeCrafters-style learning agent. Instead of just doing the work for you, it turns a build goal into a curriculum:
-
-- Breaks your goal into 5–10 small milestones with observable outcomes
-- Hands you **one task at a time** and waits for your attempt
-- Inspects your code, tests, and command output before judging progress
-- Gives **graduated hints** — a question first, then a nudge, then a focused example, and only a near-solution if you ask after struggling
-
-The Coach is **not** read-only: it can use `Read`, `Glob`, `Grep`, `Bash`, `Write`, `Edit`, and `TodoWrite`. It will create or edit files and run shell commands when that helps you move forward, and it explains what it changed and why in teaching language. It deliberately avoids dumping a complete solution unless you explicitly ask for one after working through the problem.
-
-### Starting a lesson with `/learn`
-
-`/learn <thing>` switches to the Coach and seeds a build-your-own lesson for that goal:
-
-```
-/learn grep         # build a grep-like search tool step by step
-/learn redis        # build a tiny Redis-like server step by step
-/learn http server  # build an HTTP server step by step
-```
-
-Once a lesson is running, just talk to the Coach normally. Submit your attempt, paste an error, or ask for help — for example, `I'm stuck on parsing the RESP protocol — can you give me a hint?` — and the Coach responds with the next-strongest hint rather than the full answer.
+The default is `haiku` (`anthropic/claude-haiku-4.5` via OpenRouter). Available aliases live in the `MODELS` dict in `app/agent.py`; switch at runtime with `/model <name>`. Any OpenAI-compatible model available on OpenRouter will work.
 
 ---
 
@@ -272,24 +166,38 @@ Once a lesson is running, just talk to the Coach normally. Submit your attempt, 
 ```
 app/
   main.py      # entry point — launches the Textual app
-  tui.py       # Textual App, layout, streaming callbacks, /clear handling
-  agent.py     # async agent loop, OpenRouter streaming, tool dispatch
-  tools.py     # Read, Write, Edit, Bash, Glob, Grep implementations + tool schemas
-  config.py    # system prompt + working-directory / project-type injection
-  agents.py    # agent profiles (Coach + custom), allowed-tool validation, profile store
-  session.py   # save/load/clear sessions and export conversations to Markdown
-  format.py    # UI-agnostic formatting helpers (usage / cost line)
-  permissions.py    # risky-pattern detection, auto-allow config, .agent_config.json loader
-  widgets.py        # ToolBlock / ToolToggle widgets + build_tool_body (diff/syntax/exit rendering)
+  tui.py       # Textual App: command registry, layout, streaming callbacks
+  agent.py     # async agent loop, OpenRouter streaming, tool dispatch, Task subagents
+  tools.py     # tool implementations + schemas + registry (Read/Write/Edit/Bash/Glob/Grep/TodoWrite/Skill/Task)
+  lessons.py   # pure lesson logic: goal extraction, hint ladder, milestones
+  skills.py    # SKILL.md discovery, parsing, prompt section
+  config.py    # system prompt assembly (profile-aware tool list, skills, project type)
+  agents.py    # agent profiles (Coach, Mentor, custom), allowed-tool validation, profile store
+  session.py   # atomic session/lesson/profile-meta persistence, Markdown export
+  format.py    # UI-agnostic formatting helpers (usage bar, bash stream parsing, diff styles)
+  permissions.py  # risky-command detection, auto-allow config, path gating
+  widgets.py   # ToolBlock / ToolToggle / TodoPanel widgets + tool body rendering
+skills/
+  code-review/SKILL.md  # example skill, also live when running the agent here
 ```
+
+## Development
+
+```bash
+uv sync --group dev
+uv run pytest            # test suite
+uv run ruff check app tests
+uv run mypy app
+```
+
+CI runs the same three checks on every PR.
 
 ---
 
 ## Limitations
 
-- Tool output shows the first 15 lines by default; click `▸ show N more lines` to expand. `Read` and `Bash` results are capped at 50KB before display and model context to avoid terminal freezes.
-- No parallel tool execution — tools run sequentially
-- Session file is per-directory — launching the agent from a different cwd starts a fresh conversation
-- `Esc` only takes effect at the next `await` — if the agent is blocked inside a long-running synchronous tool call (e.g. a slow `Bash` command), the interrupt waits until that tool returns
-- Permission gates are a **guardrail, not a sandbox**: the heuristic checks the leading tokens of each pipeline segment, so `python -c "import os; os.remove(...)"`, `xargs rm`, `eval "$risky"`, and other obfuscations slip through. The point is to catch obvious foot-guns, not stop a determined attacker
-- `.agent_config.json` is read on every tool call but the system prompt is captured at startup, so cwd changes mid-session require a restart
+- Tool output shows the first 15 lines by default; click `▸ show N more lines` to expand. `Read` and `Bash` results are capped at 50KB before display and model context.
+- `Esc` only takes effect at the next `await` — if the agent is blocked inside a long synchronous tool call, the interrupt waits until that tool returns (Bash timeouts kill the whole process group, so nothing hangs forever).
+- Session files are per-directory — launching the agent from a different cwd starts a fresh conversation.
+- Subagent activity is invisible until it finishes; you only see its final report (permission prompts still surface).
+- `.agent_config.json` is read on every tool call, but the system prompt is captured at startup, so new skills or a changed `system.md` need a `/clear` or restart to show up.

@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from app.agents import COACH_SYSTEM_ADDENDUM, AgentProfile, save_custom_profile
 from app.config import _BASE_PROMPT, _detect_project_type, load_system_prompt
 

@@ -1,7 +1,7 @@
 """Pure lesson/coaching logic: goals, hints, milestones. No UI dependencies."""
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
 from .session import LessonState
 

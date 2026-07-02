@@ -1,7 +1,8 @@
 import asyncio
 import json
 import os
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -276,7 +277,7 @@ async def _run_turn(
     results = await asyncio.gather(*(_exec(tc, args, ok) for tc, args, ok in prepared))
 
     # Phase 3: report results and append messages (order preserved by gather)
-    for (tc, args, _), result in zip(prepared, results):
+    for (tc, args, _), result in zip(prepared, results, strict=True):
         await on_tool_result(tc["name"], result, args or {})
         messages.append({
             "role": "tool",

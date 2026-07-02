@@ -30,6 +30,14 @@ dev = [
 [tool.ruff]
 target-version = "py314"
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+
 [tool.mypy]
 python_version = "3.14"
 ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
