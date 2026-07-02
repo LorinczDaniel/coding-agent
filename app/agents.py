@@ -34,6 +34,7 @@ COACH_ALLOWED_TOOLS = (
     "Glob",
     "Grep",
     "TodoWrite",
+    "Task",
 )
 
 COACH_SYSTEM_ADDENDUM = """\

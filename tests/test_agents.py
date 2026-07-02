@@ -18,7 +18,7 @@ from app.agents import (
 )
 
 
-COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
+COACH_TOOL_SET = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Task"}
 MENTOR_TOOL_SET = {"Read", "Glob", "Grep", "TodoWrite"}
 
 

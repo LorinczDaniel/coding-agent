@@ -188,7 +188,9 @@ async def test_tool_allowlist_filters_openrouter_schemas(callbacks):
 
 @pytest.mark.asyncio
 async def test_default_tool_schemas_include_all_existing_tools(callbacks):
-    """Without an allowlist, all built-in tool schemas are sent."""
+    """Without an allowlist, all registered tool schemas are sent."""
+    from app.tools import TOOL_REGISTRY
+
     chunks = [
         _make_chunk(delta_content="Done"),
         _make_chunk(has_choices=False),
@@ -209,7 +211,8 @@ async def test_default_tool_schemas_include_all_existing_tools(callbacks):
 
         await run_agent(messages, "test-model", **callbacks)
 
-    assert tool_names == [["Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"]]
+    assert len(tool_names) == 1
+    assert set(tool_names[0]) == set(TOOL_REGISTRY)
 
 
 @pytest.mark.asyncio
@@ -723,3 +726,149 @@ async def test_tool_call_id_and_name_can_arrive_in_later_chunks(callbacks, tmp_p
     assert len(tool_msgs) == 1
     assert tool_msgs[0]["tool_call_id"] == "call_late"
     assert tool_msgs[0]["content"] == "late data"
+
+
+# ---------------------------------------------------------------------------
+# Task subagent tool
+# ---------------------------------------------------------------------------
+
+
+def _task_call_chunks(prompt: str):
+    return [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_task", name="Task",
+                             arguments=json.dumps({
+                                 "description": "research something",
+                                 "prompt": prompt,
+                             })),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_task_tool_runs_subagent_and_returns_final_text(callbacks):
+    """A Task call spawns a nested conversation whose final text becomes the
+    tool result; the subagent gets its own system prompt and no Task tool."""
+    requests = []
+
+    parent_task_turn = _task_call_chunks("Count the widgets. Report the total.")
+    subagent_turn = [
+        _make_chunk(delta_content="There are 42 widgets."),
+        _make_chunk(has_choices=False),
+    ]
+    parent_final_turn = [
+        _make_chunk(delta_content="Done"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([parent_task_turn, subagent_turn, parent_final_turn])
+
+    async def fake_create(**kwargs):
+        requests.append(kwargs)
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "how many widgets?"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    # The subagent's final text is the parent's tool result
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == "call_task"
+    assert tool_msgs[0]["content"] == "There are 42 widgets."
+
+    # Second request is the subagent's: fresh system prompt, no Task tool
+    assert len(requests) == 3
+    sub_request = requests[1]
+    sub_tools = [t["function"]["name"] for t in sub_request["tools"]]
+    assert "Task" not in sub_tools
+    assert "Read" in sub_tools
+    sub_messages = sub_request["messages"]
+    assert sub_messages[0]["role"] == "system"
+    assert "subagent" in sub_messages[0]["content"]
+    assert sub_messages[1] == {
+        "role": "user",
+        "content": "Count the widgets. Report the total.",
+    }
+    # The parent's history never leaks into the subagent
+    assert all("how many widgets?" not in str(m) for m in sub_messages)
+
+
+@pytest.mark.asyncio
+async def test_task_tool_respects_parent_allowlist(callbacks):
+    """The subagent inherits the parent profile's tools (minus Task)."""
+    requests = []
+
+    parent_task_turn = _task_call_chunks("look around")
+    subagent_turn = [
+        _make_chunk(delta_content="report"),
+        _make_chunk(has_choices=False),
+    ]
+    parent_final_turn = [
+        _make_chunk(delta_content="ok"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([parent_task_turn, subagent_turn, parent_final_turn])
+
+    async def fake_create(**kwargs):
+        requests.append(kwargs)
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "go"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(
+            messages, "test-model", **callbacks,
+            tool_allowlist=["Read", "Grep", "Task"],
+        )
+
+    sub_tools = [t["function"]["name"] for t in requests[1]["tools"]]
+    assert sub_tools == ["Read", "Grep"]
+
+
+@pytest.mark.asyncio
+async def test_task_tool_empty_prompt_returns_error(callbacks):
+    parent_task_turn = [
+        _make_chunk(delta_tool_calls=[
+            _tool_call_delta(0, tc_id="call_task", name="Task",
+                             arguments=json.dumps({"description": "x", "prompt": "  "})),
+        ]),
+        _make_chunk(has_choices=False),
+    ]
+    parent_final_turn = [
+        _make_chunk(delta_content="ok"),
+        _make_chunk(has_choices=False),
+    ]
+    turns = iter([parent_task_turn, parent_final_turn])
+    request_count = 0
+
+    async def fake_create(**kwargs):
+        nonlocal request_count
+        request_count += 1
+        return _make_stream(next(turns))
+
+    messages = [{"role": "user", "content": "go"}]
+
+    with patch("app.agent.API_KEY", "test-key"), \
+         patch("app.agent.AsyncOpenAI") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = fake_create
+        mock_cls.return_value = mock_client
+
+        await run_agent(messages, "test-model", **callbacks)
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert tool_msgs[0]["content"].startswith("Error: Task requires")
+    # No subagent request was made for the bad call
+    assert request_count == 2

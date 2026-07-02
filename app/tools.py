@@ -443,6 +443,46 @@ def TodoWrite(todos: list[dict]) -> str:
     return "Todo list updated:\n" + "\n".join(lines)
 
 
+# --- Task (subagent) ---
+
+TASK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Task",
+        "description": (
+            "Launch a subagent to handle a self-contained task in its own fresh context. "
+            "The subagent has the same tools as you (except Task) and only its final report "
+            "comes back — its intermediate tool calls stay out of your conversation. "
+            "Use it for research or multi-step side quests whose details you don't need. "
+            "The prompt must be fully self-contained: the subagent cannot see this conversation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Short (3-7 word) label for what the subagent will do.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Complete instructions for the subagent, including exactly "
+                        "what it should return in its final message."
+                    ),
+                },
+            },
+            "required": ["description", "prompt"],
+        },
+    },
+}
+
+
+def _task_placeholder_handler(args: dict[str, Any]) -> str:
+    # The agent loop intercepts Task calls and runs a subagent; this only
+    # fires if a Task call reaches plain execute_tool (e.g. inside a subagent).
+    return "Error: the Task tool is not available in this context."
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     schema: dict[str, Any]
@@ -490,6 +530,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "Glob": ToolDefinition(GLOB_TOOL, _glob_handler),
     "Grep": ToolDefinition(GREP_TOOL, _grep_handler),
     "TodoWrite": ToolDefinition(TODO_TOOL, _todo_handler),
+    "Task": ToolDefinition(TASK_TOOL, _task_placeholder_handler),
 }
 
 

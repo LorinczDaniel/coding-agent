@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from .permissions import requires_confirmation
-from .tools import execute_tool, get_tool_schemas
+from .tools import TOOL_REGISTRY, execute_tool, get_tool_schemas
 
 DENIED_RESULT = (
     "Error: user denied this tool call. "
@@ -21,6 +21,13 @@ INVALID_ARGS_RESULT = (
 
 # Safety valve: a model stuck repeating tool calls stops burning tokens here.
 MAX_TOOL_TURNS = 50
+
+SUBAGENT_SYSTEM_PROMPT = (
+    "You are a subagent handling one self-contained task for a parent coding "
+    "agent. Work autonomously with your tools and do not ask questions. "
+    "Only your FINAL message is returned to the parent, so end with a "
+    "complete, standalone report of what you did and found."
+)
 
 load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -62,6 +69,12 @@ async def run_agent(
         raise RuntimeError("OPENROUTER_API_KEY is not set")
 
     client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+    async def task_runner(args: dict) -> str:
+        return await _run_task_subagent(
+            client, args, model, tool_allowlist, on_usage, on_tool_confirm,
+        )
+
     try:
         for _turn in range(MAX_TOOL_TURNS):
             had_tool_calls = await _run_turn(
@@ -75,6 +88,7 @@ async def run_agent(
                 on_tool_confirm,
                 on_todo,
                 tool_allowlist,
+                task_runner=task_runner,
             )
             if not had_tool_calls:
                 return
@@ -84,6 +98,69 @@ async def run_agent(
         )
     finally:
         await client.close()
+
+
+async def _noop_text(_delta: str) -> None:
+    return None
+
+
+async def _noop_tool_start(_name: str, _args_json: str) -> None:
+    return None
+
+
+async def _noop_tool_result(_name: str, _result: str, _args: dict) -> None:
+    return None
+
+
+async def _run_task_subagent(
+    client: AsyncOpenAI,
+    args: dict,
+    model: str,
+    parent_allowlist: list[str] | tuple[str, ...] | None,
+    on_usage: Callable[[int, int, float], None] | None,
+    on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None,
+) -> str:
+    """Run a nested agent conversation and return its final assistant text.
+
+    The subagent inherits the parent's tools minus Task (no recursion), and
+    shares the parent's usage tracking and permission prompts.
+    """
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return "Error: Task requires a non-empty 'prompt'."
+
+    parent_tools = list(TOOL_REGISTRY) if parent_allowlist is None else list(parent_allowlist)
+    allowlist = [name for name in parent_tools if name != "Task"]
+    messages: list = [
+        {"role": "system", "content": SUBAGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+    for _turn in range(MAX_TOOL_TURNS):
+        had_tool_calls = await _run_turn(
+            client,
+            messages,
+            model,
+            _noop_text,
+            _noop_tool_start,
+            _noop_tool_result,
+            on_usage,
+            on_tool_confirm,
+            None,
+            allowlist,
+        )
+        if not had_tool_calls:
+            break
+
+    final = next(
+        (
+            m.get("content")
+            for m in reversed(messages)
+            if isinstance(m, dict) and m.get("role") == "assistant" and m.get("content")
+        ),
+        None,
+    )
+    return final or "Error: subagent finished without a final report."
 
 
 async def _run_turn(
@@ -97,6 +174,7 @@ async def _run_turn(
     on_tool_confirm: Callable[[str, dict, str], Awaitable[bool]] | None,
     on_todo: Callable[[list[dict]], Awaitable[None]] | None,
     tool_allowlist: list[str] | tuple[str, ...] | None,
+    task_runner: Callable[[dict], Awaitable[str]] | None = None,
 ) -> bool:
     """Run one model request plus its tool calls. Returns True if tools ran."""
     tool_calls_acc: dict[int, dict] = {}
@@ -184,7 +262,10 @@ async def _run_turn(
             return DENIED_RESULT
         name = tc["name"]
         try:
-            result = await asyncio.to_thread(execute_tool, name, args)
+            if name == "Task" and task_runner is not None:
+                result = await task_runner(args)
+            else:
+                result = await asyncio.to_thread(execute_tool, name, args)
         except Exception as e:
             return f"Error executing {name}: {e}"
         if name == "TodoWrite":
