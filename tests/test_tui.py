@@ -1364,6 +1364,20 @@ async def test_run_check_turn_command_error_reenables_input(monkeypatch):
     assert any("no shell" in _rendered_text(widget) for widget in appended)
 
 
+def test_show_welcome_offers_three_starting_points(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._show_welcome()
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Welcome" in text
+    assert "/learn redis" in text
+    assert "ask me about this codebase" in text
+    assert "/help" in text
+
+
 def _onboarding_app(monkeypatch, appended, input_widget=None):
     app = _make_app()
     input_widget = input_widget or DummyInput()
