@@ -104,7 +104,7 @@ def hint_level_display(level: int) -> str:
     return f"{clamped}/{MAX_HINT_LEVEL} ({HINT_LEVELS[clamped - 1][0]})"
 
 
-def lesson_todos(lesson: LessonState) -> list[dict]:
+def lesson_todos(lesson: LessonState, next_hint: str | None = None) -> list[dict]:
     todos: list[dict] = []
     for index, milestone in enumerate(lesson.milestones):
         if index < lesson.current_index:
@@ -113,8 +113,48 @@ def lesson_todos(lesson: LessonState) -> list[dict]:
             status = "in-progress"
         else:
             status = "not-started"
-        todos.append({"id": index + 1, "title": milestone, "status": status})
+        todo: dict = {"id": index + 1, "title": milestone, "status": status}
+        if status == "in-progress" and next_hint:
+            todo["hint"] = f"next: {next_hint}"
+        todos.append(todo)
     return todos
+
+
+def next_action_hint(lesson: LessonState, root: Path | None = None) -> str:
+    """One-line pointer for the current task: what to edit and how to verify."""
+    slug = lesson_slug(lesson.goal)
+    starter = (root or Path.cwd()) / "lessons" / slug / "main.py"
+    edit = f"edit lessons/{slug}/main.py" if starter.exists() else "edit your solution"
+    verify = "then /check" if current_check_command(lesson) is not None else "then ask the coach to review"
+    return f"{edit}, {verify}"
+
+
+def milestone_card(lesson: LessonState, index: int, next_hint: str | None = None) -> list[str]:
+    """Summary lines for one milestone, shown when it is clicked in the panel."""
+    if index < lesson.current_index:
+        status = "completed"
+    elif index == lesson.current_index:
+        status = "in-progress"
+    else:
+        status = "not started"
+    check = lesson.check_commands[index] if index < len(lesson.check_commands) else ""
+    lines = [
+        f"Milestone {index + 1}/{len(lesson.milestones)}: {lesson.milestones[index]}",
+        f"Status: {status}",
+        f"Check: {check or 'not set yet'}",
+    ]
+    if index == lesson.current_index and next_hint:
+        lines.append(f"Next: {next_hint}")
+    return lines
+
+
+def read_task_card(goal: str, root: Path | None = None) -> str | None:
+    """The workspace TASK.md contents, or None if it does not exist."""
+    path = (root or Path.cwd()) / "lessons" / lesson_slug(goal) / "TASK.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def check_commands_from_todos(todos: list[dict]) -> tuple[str, ...]:

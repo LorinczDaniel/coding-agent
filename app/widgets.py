@@ -1,3 +1,4 @@
+from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
@@ -156,7 +157,12 @@ _STATUS_ICONS = {
 
 
 class TodoPanel(Static):
-    """Side panel that renders the agent's todo list and updates live."""
+    """Side panel that renders the agent's todo list and updates live.
+
+    Each title is a click target that runs app.show_milestone(index) — the
+    Textual action-link mechanism, so it works even when titles wrap. Items
+    may carry a "hint" key rendered as a dim line below the title.
+    """
 
     todos: reactive[list[dict]] = reactive(list, always_update=True)
 
@@ -164,8 +170,12 @@ class TodoPanel(Static):
         if not self.todos:
             return Text("No tasks", style="dim italic")
         lines: list[Text] = []
-        for item in self.todos:
+        for index, item in enumerate(self.todos):
             icon, style = _STATUS_ICONS.get(item.get("status", ""), ("?", "red"))
             title_style = "dim strike" if item.get("status") == "completed" else "white"
-            lines.append(Text.assemble((f" {icon} ", style), (item.get("title", ""), title_style)))
+            click_style = Style.parse(title_style) + Style(meta={"@click": f"app.show_milestone({index})"})
+            lines.append(Text.assemble((f" {icon} ", style), (item.get("title", ""), click_style)))
+            hint = item.get("hint")
+            if isinstance(hint, str) and hint:
+                lines.append(Text(f"   {hint}", style="dim italic"))
         return Text("\n").join(lines)
