@@ -1902,3 +1902,155 @@ def test_send_learning_message_starts_coach_lesson(monkeypatch):
     assert "Profile: coach" in _plain(context_bar.value)
     assert "Lesson: C++" in _plain(context_bar.value)
     assert input_widget.disabled is True
+
+
+# --- slash-command autocomplete ---
+
+def test_match_commands_slash_alone_lists_everything():
+    from app.tui import COMMANDS, match_commands
+
+    assert match_commands("/") == list(COMMANDS)
+
+
+def test_match_commands_narrows_by_prefix():
+    from app.tui import match_commands
+
+    assert [c.name for c in match_commands("/se")] == ["/sessions"]
+    assert [c.name for c in match_commands("/c")] == ["/clear", "/check"]
+
+
+def test_match_commands_empty_for_non_commands_and_args():
+    from app.tui import match_commands
+
+    assert match_commands("hello") == []
+    assert match_commands("") == []
+    assert match_commands("/sessions load") == []
+    # A trailing space means the command token is finished (e.g. right after
+    # tab completion) — suggestions must close.
+    assert match_commands("/sessions ") == []
+
+
+def test_closest_command_suggests_near_miss():
+    from app.tui import closest_command
+
+    assert closest_command("/sesions") == "/sessions"
+    assert closest_command("/hlep") == "/help"
+    assert closest_command("/zzzz") is None
+
+
+def test_unknown_command_offers_did_you_mean(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/sesions list")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown command: /sesions" in text
+    assert "Did you mean /sessions?" in text
+
+
+def test_unknown_command_without_near_miss_has_no_suggestion(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._send("/zzzz")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Unknown command: /zzzz" in text
+    assert "Did you mean" not in text
+
+
+def _suggestion_app(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    input_widget.has_focus = True
+    box = DummyBanner()
+
+    def query_one(selector, *args):
+        if selector == "#command-suggestions":
+            return box
+        return input_widget
+
+    monkeypatch.setattr(app, "query_one", query_one)
+    return app, input_widget, box
+
+
+def test_update_suggestions_shows_matches(monkeypatch):
+    app, input_widget, box = _suggestion_app(monkeypatch)
+
+    app._update_suggestions("/se")
+
+    assert [c.name for c in app._suggestions] == ["/sessions"]
+    assert app._suggestion_index == 0
+    assert box.display is True
+    assert "/sessions" in _plain(box.value)
+
+
+def test_update_suggestions_hides_when_no_matches(monkeypatch):
+    app, input_widget, box = _suggestion_app(monkeypatch)
+    app._update_suggestions("/se")
+
+    app._update_suggestions("plain text")
+
+    assert app._suggestions == []
+    assert box.display is False
+
+
+def test_suggestion_keys_cycle_selection(monkeypatch):
+    from types import SimpleNamespace
+
+    app, input_widget, box = _suggestion_app(monkeypatch)
+    app._update_suggestions("/c")
+    assert [c.name for c in app._suggestions] == ["/clear", "/check"]
+
+    event = SimpleNamespace(key="down", prevent_default=lambda: None, stop=lambda: None)
+    app.on_key(event)
+    assert app._suggestion_index == 1
+
+    app.on_key(event)
+    assert app._suggestion_index == 0
+
+    event = SimpleNamespace(key="up", prevent_default=lambda: None, stop=lambda: None)
+    app.on_key(event)
+    assert app._suggestion_index == 1
+
+
+def test_suggestion_navigation_skips_history(monkeypatch):
+    from types import SimpleNamespace
+
+    app, input_widget, box = _suggestion_app(monkeypatch)
+    app._history = ["old message"]
+    app._history_index = 1
+    app._update_suggestions("/c")
+
+    event = SimpleNamespace(key="up", prevent_default=lambda: None, stop=lambda: None)
+    app.on_key(event)
+
+    assert input_widget.value == ""
+    assert app._history_index == 1
+
+
+def test_complete_suggestion_fills_input(monkeypatch):
+    app, input_widget, box = _suggestion_app(monkeypatch)
+    app._update_suggestions("/se")
+
+    app.action_complete_suggestion()
+
+    assert input_widget.value == "/sessions "
+    assert input_widget.cursor_position == len("/sessions ")
+
+
+def test_send_clears_active_suggestions(monkeypatch):
+    app, input_widget, box = _suggestion_app(monkeypatch)
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    app._update_suggestions("/he")
+
+    app._send("/help")
+
+    assert app._suggestions == []
+    assert box.display is False
