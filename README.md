@@ -119,8 +119,12 @@ Most commands also support a `help` subcommand (e.g. `/model help`, `/sessions h
 git clone https://github.com/LorinczDaniel/coding-agent.git
 cd coding-agent
 uv sync
-cp .env.example .env   # then add your OpenRouter key
 ```
+
+No key setup needed up front: on first launch the app detects a missing
+`OPENROUTER_API_KEY`, asks for it right in the input box (masked), and writes
+`.env` for you. If you prefer to do it by hand: `cp .env.example .env` and add
+your key.
 
 ## Running
 
