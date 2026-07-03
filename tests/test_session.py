@@ -264,6 +264,30 @@ def test_lesson_state_defaults():
     assert LessonState.from_dict(state.to_dict()) == state
 
 
+def test_lesson_state_round_trips_check_commands():
+    state = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("python main.py -h", ""),
+        current_index=1,
+    )
+    assert state.check_commands == ("python main.py -h", "")
+    assert LessonState.from_dict(state.to_dict()) == state
+
+
+def test_lesson_state_defaults_empty_check_commands():
+    assert LessonState(goal="grep").check_commands == ()
+
+
+def test_lesson_state_coerces_invalid_check_commands():
+    data = {"goal": "grep", "milestones": ["a", "b"], "check_commands": "not a list"}
+    assert LessonState.from_dict(data).check_commands == ()
+    data["check_commands"] = ["echo a", 5]
+    # Invalid entries become "" instead of being dropped so commands stay
+    # aligned with their milestones.
+    assert LessonState.from_dict(data).check_commands == ("echo a", "")
+
+
 def test_lesson_escalated_increments_and_clamps():
     state = LessonState(goal="grep")
     state = state.escalated(4)

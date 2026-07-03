@@ -1,5 +1,8 @@
 from app.lessons import (
     MAX_HINT_LEVEL,
+    check_commands_from_todos,
+    check_prompt,
+    current_check_command,
     current_index_from_todos,
     extract_learning_goal,
     hint_level_display,
@@ -8,6 +11,7 @@ from app.lessons import (
     lesson_session_name,
     scaffold_lesson_workspace,
 )
+from app.session import LessonState
 
 # --- extract_learning_goal ---
 
@@ -131,6 +135,54 @@ def test_current_index_falls_back_when_no_progress():
 
 def test_current_index_empty_todos():
     assert current_index_from_todos([], 3) == 0
+
+
+# --- check commands ---
+
+def test_check_commands_from_todos_align_with_titles():
+    todos = [
+        {"id": 1, "title": "Parse args", "status": "completed", "check": "python main.py -h"},
+        {"id": 2, "title": "Search files", "status": "in-progress"},
+        {"id": 3, "title": "   ", "status": "not-started", "check": "ignored"},
+        {"id": 4, "title": "Format output", "status": "not-started", "check": "  pytest -q  "},
+    ]
+    # Items without a usable title are dropped, exactly like milestones, so
+    # the commands stay aligned with the milestone list.
+    assert check_commands_from_todos(todos) == ("python main.py -h", "", "pytest -q")
+
+
+def test_check_commands_from_todos_ignore_non_string_check():
+    todos = [{"id": 1, "title": "Parse args", "status": "in-progress", "check": 5}]
+    assert check_commands_from_todos(todos) == ("",)
+
+
+def test_current_check_command_returns_command_for_current_milestone():
+    lesson = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("echo a", "echo b"),
+        current_index=1,
+    )
+    assert current_check_command(lesson) == "echo b"
+
+
+def test_current_check_command_none_when_unset_blank_or_finished():
+    assert current_check_command(LessonState(goal="grep", milestones=("a",))) is None
+    blank = LessonState(goal="grep", milestones=("a", "b"), check_commands=("", "echo b"))
+    assert current_check_command(blank) is None
+    finished = LessonState(
+        goal="grep", milestones=("a",), check_commands=("echo a",), current_index=1,
+    )
+    assert current_check_command(finished) is None
+
+
+def test_check_prompt_includes_command_output_and_verdict_request():
+    prompt = check_prompt("Search files", "pytest -q", "[exit 0]\n[stdout]\n3 passed")
+    assert "Search files" in prompt
+    assert "pytest -q" in prompt
+    assert "3 passed" in prompt
+    assert "TodoWrite" in prompt
+    assert "hint" in prompt.lower()
 
 
 # --- lesson_session_name ---

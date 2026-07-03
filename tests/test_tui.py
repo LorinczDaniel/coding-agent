@@ -1085,6 +1085,7 @@ async def test_run_agent_todowrite_updates_active_lesson_milestones(monkeypatch)
     assert app._lesson == LessonState(
         goal="grep",
         milestones=("Parse arguments", "Search files", "Format output"),
+        check_commands=("", "", ""),
         current_index=1,
         hint_level=0,
     )
@@ -1167,6 +1168,206 @@ def test_send_routes_hint_to_handler(monkeypatch):
     assert calls == ["/hint"]
 
 
+def test_send_routes_check_to_handler(monkeypatch):
+    app = _make_app()
+    calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: DummyInput())
+    monkeypatch.setattr(app, "_handle_check_command", lambda text: calls.append(text))
+
+    app._send("/check")
+
+    assert calls == ["/check"]
+
+
+def test_check_help_explains_flow(monkeypatch):
+    app = _make_app()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app._handle_check_command("/check help")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "/check" in text
+    assert "milestone" in text
+
+
+def test_check_with_extra_arg_shows_usage(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="grep", milestones=("a",), check_commands=("echo a",))
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_check", lambda command, milestone: run_calls.append(True))
+
+    app._handle_check_command("/check please")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Usage: /check" in text
+    assert run_calls == []
+
+
+def test_check_without_lesson_prompts_to_learn(monkeypatch):
+    app = _make_app()
+    app._lesson = None
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_check", lambda command, milestone: run_calls.append(True))
+
+    app._handle_check_command("/check")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "No active lesson" in text
+    assert run_calls == []
+
+
+def test_check_without_command_explains_how_to_get_one(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="grep", milestones=("Parse args",))
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_check", lambda command, milestone: run_calls.append(True))
+
+    app._handle_check_command("/check")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "No check command" in text
+    assert "coach" in text.lower()
+    assert run_calls == []
+
+
+def test_check_with_command_starts_check_run(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("", "pytest -q"),
+        current_index=1,
+    )
+    input_widget = DummyInput()
+    appended = []
+    run_calls = []
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_check", lambda command, milestone: run_calls.append((command, milestone)))
+
+    app._handle_check_command("/check")
+
+    assert run_calls == [("pytest -q", "Search files")]
+    assert input_widget.disabled is True
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "pytest -q" in text
+
+
+async def test_run_check_turn_shows_output_and_asks_coach_to_judge(monkeypatch):
+    from app.lessons import check_prompt as _check_prompt
+
+    app = _make_app()
+    app._lesson = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("", "pytest -q"),
+        current_index=1,
+    )
+    appended = []
+    bash_calls = []
+    turn_calls = []
+    output = "[exit 0]\n[stdout]\n3 passed"
+
+    async def fake_turn():
+        turn_calls.append(True)
+
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent_turn", fake_turn)
+    monkeypatch.setattr(
+        "app.tui.run_check_command",
+        lambda command: bash_calls.append(command) or output,
+    )
+
+    await app._run_check_turn("pytest -q", "Search files")
+
+    assert bash_calls == ["pytest -q"]
+    assert app._messages[-1] == {
+        "role": "user",
+        "content": _check_prompt("Search files", "pytest -q", output),
+    }
+    assert app._safe_msg_count == len(app._messages)
+    assert turn_calls == [True]
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "3 passed" in text
+
+
+async def test_run_check_turn_interrupt_reenables_input_without_message(monkeypatch):
+    import asyncio
+
+    app = _make_app()
+    input_widget = DummyInput()
+    input_widget.disabled = True
+    appended = []
+    turn_calls = []
+
+    async def fake_turn():
+        turn_calls.append(True)
+
+    def cancelled_check(command):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent_turn", fake_turn)
+    monkeypatch.setattr("app.tui.run_check_command", cancelled_check)
+
+    await app._run_check_turn("pytest -q", "Search files")
+
+    assert input_widget.disabled is False
+    assert turn_calls == []
+    assert app._messages == [{"role": "system", "content": "sys"}]
+    assert any("interrupted" in _rendered_text(widget) for widget in appended)
+
+
+async def test_run_check_turn_command_error_reenables_input(monkeypatch):
+    app = _make_app()
+    input_widget = DummyInput()
+    input_widget.disabled = True
+    appended = []
+    turn_calls = []
+
+    async def fake_turn():
+        turn_calls.append(True)
+
+    def broken_check(command):
+        raise OSError("no shell")
+
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_run_agent_turn", fake_turn)
+    monkeypatch.setattr("app.tui.run_check_command", broken_check)
+
+    await app._run_check_turn("pytest -q", "Search files")
+
+    assert input_widget.disabled is False
+    assert turn_calls == []
+    assert app._messages == [{"role": "system", "content": "sys"}]
+    assert any("no shell" in _rendered_text(widget) for widget in appended)
+
+
+def test_update_lesson_milestones_captures_check_commands(monkeypatch):
+    app = _make_app()
+    app._lesson = LessonState(goal="grep")
+    saved = []
+    _lesson_widgets(monkeypatch, app)
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved.append((state, name)))
+
+    app._update_lesson_milestones([
+        {"id": 1, "title": "Parse args", "status": "in-progress", "check": "python main.py -h"},
+        {"id": 2, "title": "Search files", "status": "not-started"},
+    ])
+
+    assert app._lesson.check_commands == ("python main.py -h", "")
+    assert saved == [(app._lesson, "default")]
+
+
 def test_send_routes_agent_to_handler(monkeypatch):
     app = _make_app()
     calls = []
@@ -1196,7 +1397,7 @@ def test_send_help_lists_all_commands(monkeypatch):
     app._send("/help")
 
     text = "\n".join(_rendered_text(widget) for widget in appended)
-    for expected in ["/help", "/clear", "/export", "/learn", "/hint", "/agent", "/model", "/sessions", "/todo-clear"]:
+    for expected in ["/help", "/clear", "/export", "/learn", "/hint", "/check", "/agent", "/model", "/sessions", "/todo-clear"]:
         assert expected in text
 
 

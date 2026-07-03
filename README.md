@@ -68,6 +68,7 @@ On startup the agent is told its working directory and a guess at the project ty
 - **Model switching** — swap between models mid-session (e.g. haiku for speed, sonnet for capability) without losing context
 - **Agent profiles** — the agent runs under a named *profile* that sets its persona and which tools it may use. The built-in **Coach** profile (the default) is a CodeCrafters-style learning coach; **Mentor** is a read-only guide. Switch with `/agent <name>`, or define your own with `/agent create`.
 - **Guided learning (`/learn`)** — `/learn <thing>` starts a build-your-own-X lesson in a fresh `lesson-<thing>` session (your current conversation is kept). The Coach turns your goal into 5–10 milestones, hands you one task at a time, and offers graduated hints (`/hint`).
+- **Milestone verification (`/check`)** — each milestone carries a check command the Coach sets when planning the lesson. `/check` runs it, shows the output, and has the Coach judge the result: pass advances to the next task, fail gets an explanation and a hint. The learner's loop is edit file → `/check` → feedback.
 - **Tool permission gates** — risky `Bash` commands and any `Read`/`Write`/`Edit` touching a path outside the working directory pause for inline y/n approval. Denying tells the model not to retry.
 
 ### Commands
@@ -79,6 +80,7 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/export [filename]` | Export the current conversation to Markdown |
 | `/learn <thing>` | Start a guided build-your-own lesson with the Coach (e.g. `/learn grep`) |
 | `/hint` | Get the next-strongest hint for the current lesson task |
+| `/check` | Run the current milestone's check command and get the Coach's verdict |
 | `/agent` | Show the current agent profile and available profiles |
 | `/agent <name>` | Switch to an agent profile (starts a fresh conversation) |
 | `/agent create [name]` | Create a custom agent profile interactively |

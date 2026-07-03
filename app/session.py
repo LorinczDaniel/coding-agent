@@ -16,6 +16,9 @@ class LessonState:
 
     goal: str
     milestones: tuple[str, ...] = ()
+    # One shell command per milestone ("" = no check set); index-aligned with
+    # milestones so /check can verify the current task objectively.
+    check_commands: tuple[str, ...] = ()
     current_index: int = 0
     hint_level: int = 0
 
@@ -23,6 +26,7 @@ class LessonState:
         return {
             "goal": self.goal,
             "milestones": list(self.milestones),
+            "check_commands": list(self.check_commands),
             "current_index": self.current_index,
             "hint_level": self.hint_level,
         }
@@ -40,6 +44,13 @@ class LessonState:
             return None
         milestones = tuple(m for m in raw_milestones if isinstance(m, str))
 
+        raw_checks = data.get("check_commands", [])
+        if not isinstance(raw_checks, list):
+            raw_checks = []
+        # Invalid entries become "" instead of being dropped so commands stay
+        # aligned with their milestones.
+        check_commands = tuple(c if isinstance(c, str) else "" for c in raw_checks)
+
         current_index = data.get("current_index", 0)
         if not isinstance(current_index, int) or isinstance(current_index, bool) or current_index < 0:
             current_index = 0
@@ -53,6 +64,7 @@ class LessonState:
         return cls(
             goal=goal.strip(),
             milestones=milestones,
+            check_commands=check_commands,
             current_index=current_index,
             hint_level=hint_level,
         )

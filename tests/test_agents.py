@@ -71,6 +71,14 @@ def test_coach_profile_contains_teaching_instructions():
         assert expected in instructions
 
 
+def test_coach_profile_instructs_milestone_check_commands():
+    instructions = PROFILES[COACH_PROFILE].system_addendum
+
+    assert "check" in instructions
+    assert "TodoWrite" in instructions
+    assert "/check" in instructions
+
+
 def test_get_profile_returns_default_coach():
     assert get_profile() is PROFILES[COACH_PROFILE]
 
