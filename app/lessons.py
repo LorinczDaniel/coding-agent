@@ -117,6 +117,39 @@ def lesson_todos(lesson: LessonState) -> list[dict]:
     return todos
 
 
+def check_commands_from_todos(todos: list[dict]) -> tuple[str, ...]:
+    """Extract each todo's check command, aligned with the milestone list.
+
+    Uses the same title filter as the milestone extraction so index i here
+    always belongs to milestone i; items without a check get "".
+    """
+    return tuple(
+        check.strip() if isinstance(check := item.get("check"), str) else ""
+        for item in todos
+        if isinstance(item.get("title"), str) and item.get("title", "").strip()
+    )
+
+
+def current_check_command(lesson: LessonState) -> str | None:
+    """The check command for the current milestone, or None if not set."""
+    if not (0 <= lesson.current_index < len(lesson.check_commands)):
+        return None
+    return lesson.check_commands[lesson.current_index] or None
+
+
+def check_prompt(milestone: str, command: str, output: str) -> str:
+    return (
+        f'I ran the check for the current task ("{milestone}").\n'
+        f"Command: {command}\n"
+        f"Output:\n```\n{output}\n```\n\n"
+        "Judge this result against the task's expected outcome. If it passes, "
+        "mark the milestone completed with TodoWrite (keeping each milestone's "
+        "check command) and introduce the next task. If it fails, do not "
+        "advance: explain what the output means and give me a hint toward "
+        "fixing it, without the full solution."
+    )
+
+
 def current_index_from_todos(todos: list[dict], fallback: int) -> int:
     if not todos:
         return 0

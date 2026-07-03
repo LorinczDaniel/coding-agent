@@ -314,3 +314,25 @@ def test_todo_write_invalid_status():
 def test_todo_write_invalid_item_type():
     result = TodoWrite(["not a dict"])
     assert result.startswith("Error")
+
+
+def test_todo_write_accepts_optional_check_command():
+    result = TodoWrite([
+        {"id": 1, "title": "Parse args", "status": "in-progress", "check": "pytest -q"},
+    ])
+    assert "Todo list updated" in result
+
+
+def test_todo_write_rejects_non_string_check():
+    result = TodoWrite([
+        {"id": 1, "title": "Parse args", "status": "in-progress", "check": 5},
+    ])
+    assert result.startswith("Error")
+
+
+def test_todo_tool_schema_declares_check_field():
+    from app.tools import TODO_TOOL
+
+    item_props = TODO_TOOL["function"]["parameters"]["properties"]["todos"]["items"]["properties"]
+    assert "check" in item_props
+    assert item_props["check"]["type"] == "string"

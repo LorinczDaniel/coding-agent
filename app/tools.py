@@ -413,6 +413,14 @@ TODO_TOOL = {
                                 "enum": ["not-started", "in-progress", "completed"],
                                 "description": "Current status of this item.",
                             },
+                            "check": {
+                                "type": "string",
+                                "description": (
+                                    "Optional shell command that objectively verifies this "
+                                    "item is done (exit 0 = pass). Set one per lesson "
+                                    "milestone; the learner runs it with /check."
+                                ),
+                            },
                         },
                         "required": ["id", "title", "status"],
                     },
@@ -437,6 +445,8 @@ def TodoWrite(todos: list[dict]) -> str:
                 return f"Error: todo item missing required field: {key}"
         if item["status"] not in _VALID_STATUSES:
             return f"Error: invalid status '{item['status']}'. Must be one of: {', '.join(sorted(_VALID_STATUSES))}"
+        if "check" in item and not isinstance(item["check"], str):
+            return "Error: check must be a string shell command."
     lines = []
     for item in todos:
         icon = {"not-started": "○", "in-progress": "●", "completed": "✓"}[item["status"]]

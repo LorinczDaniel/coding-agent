@@ -31,6 +31,9 @@ from .format import format_usage
 from .lessons import (
     HINT_LEVELS,
     MAX_HINT_LEVEL,
+    check_commands_from_todos,
+    check_prompt,
+    current_check_command,
     current_index_from_todos,
     extract_learning_goal,
     hint_level_display,
@@ -58,6 +61,7 @@ from .session import (
     validate_session_name,
 )
 from .skills import discover_skills
+from .tools import Bash as run_check_command
 from .widgets import TodoPanel, ToolBlock, build_tool_body
 
 HIDDEN_CHAT_TOOLS = {"TodoWrite"}
@@ -87,6 +91,9 @@ COMMANDS: tuple[Command, ...] = (
     )),
     Command("/hint", "_handle_hint_command", (
         ("/hint", "Get the next-strongest hint for the current task"),
+    )),
+    Command("/check", "_handle_check_command", (
+        ("/check", "Run the current milestone's check and get a verdict"),
     )),
     Command("/agent", "_handle_agent_command", (
         ("/agent [name]", "Show or switch the active agent profile"),
@@ -467,6 +474,7 @@ class AgentApp(App):
         self._lesson = LessonState(
             goal=self._lesson.goal,
             milestones=milestones,
+            check_commands=check_commands_from_todos(todos),
             current_index=current_index,
             hint_level=hint_level,
         )
@@ -1039,6 +1047,79 @@ class AgentApp(App):
         self.query_one("#user-input", Input).disabled = True
         self._run_agent()
 
+    def _handle_check_command(self, text: str) -> None:
+        arg = text[len("/check"):].strip()
+
+        if arg == "help":
+            for line in [
+                "/check               Run the current milestone's check command",
+                "",
+                "The coach sets a check command for each milestone when it plans",
+                "the lesson. /check runs it, shows the output, and asks the coach",
+                "to judge it: advance to the next task, or give a hint.",
+            ]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            return
+
+        if arg:
+            self._append_sync(Static(Text("Usage: /check  (type /check help for details)", style="dim")))
+            return
+
+        if self._lesson is None:
+            self._append_sync(Static(Text.assemble(
+                ("No active lesson. Start one with ", "dim"),
+                ("/learn <thing>", "bold yellow"),
+                (" before running a check.", "dim"),
+            )))
+            return
+
+        command = current_check_command(self._lesson)
+        if command is None:
+            self._append_sync(Static(Text(
+                "No check command for the current milestone yet. Ask the coach to "
+                "plan the milestones (it sets a check for each one).",
+                style="dim",
+            )))
+            return
+
+        milestone = self._lesson.milestones[self._lesson.current_index]
+        self._append_sync(Static(Text.assemble(
+            ("Check: ", "dim"),
+            (command, "bold"),
+        )))
+        self.query_one("#user-input", Input).disabled = True
+        self._run_check(command, milestone)
+
+    @work(exclusive=True)
+    async def _run_check(self, command: str, milestone: str) -> None:
+        await self._run_check_turn(command, milestone)
+
+    async def _run_check_turn(self, command: str, milestone: str) -> None:
+        # This runs before _run_agent_turn's error handling exists, so failures
+        # here must re-enable the input themselves or the UI locks up.
+        try:
+            # run_check_command blocks (subprocess + timeout); keep the UI alive.
+            output = await asyncio.to_thread(run_check_command, command)
+        except asyncio.CancelledError:
+            self._append_sync(Static(Text("[interrupted]", style="dim italic")))
+            self._reenable_input()
+            return
+        except Exception as e:
+            self._append_sync(Static(Text.assemble(("Error: ", "bold red"), (str(e), "white"))))
+            self._reenable_input()
+            return
+        for line in output.splitlines() or ["(no output)"]:
+            self._append_sync(Static(Text.assemble(("│ ", "dim"), (line, "dim white"))))
+        prompt = check_prompt(milestone, command, output)
+        self._messages.append({"role": "user", "content": prompt})
+        self._safe_msg_count = len(self._messages)
+        await self._run_agent_turn()
+
+    def _reenable_input(self) -> None:
+        inp = self.query_one("#user-input", Input)
+        inp.disabled = False
+        inp.focus()
+
     def _handle_agent_command(self, text: str) -> None:
         arg = text[len("/agent"):].strip()
 
@@ -1278,6 +1359,4 @@ class AgentApp(App):
             self._append_sync(Static(Text.assemble(("Error: ", "bold red"), (str(e), "white"))))
         finally:
             self._persist_session()
-            inp = self.query_one("#user-input", Input)
-            inp.disabled = False
-            inp.focus()
+            self._reenable_input()
