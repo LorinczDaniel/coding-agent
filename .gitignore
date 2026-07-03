@@ -179,8 +179,9 @@ system.md
 .claude-agent/
 # Generated/demo artifacts
 debug.log
-snake_game/
 conversation.md
+# Learning projects built with/by the agent — never part of the software itself
+playground/
 
 # Claude Code personal settings
 .claude/settings.local.json
