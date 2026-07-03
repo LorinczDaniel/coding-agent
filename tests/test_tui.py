@@ -1364,6 +1364,82 @@ async def test_run_check_turn_command_error_reenables_input(monkeypatch):
     assert any("no shell" in _rendered_text(widget) for widget in appended)
 
 
+def _onboarding_app(monkeypatch, appended, input_widget=None):
+    app = _make_app()
+    input_widget = input_widget or DummyInput()
+    monkeypatch.setattr(app, "query_one", lambda *args: input_widget)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    return app, input_widget
+
+
+def test_api_key_onboarding_prompts_with_signup_link(monkeypatch):
+    appended = []
+    app, input_widget = _onboarding_app(monkeypatch, appended)
+
+    app._start_api_key_onboarding()
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_api_key is True
+    assert "openrouter.ai" in text
+    assert "skip" in text
+    assert input_widget.password is True
+    assert "API key" in input_widget.placeholder
+
+
+def test_api_key_answer_saves_and_unlocks_input(monkeypatch):
+    appended = []
+    saved = []
+    app, input_widget = _onboarding_app(monkeypatch, appended)
+    app._pending_api_key = True
+    input_widget.password = True
+    monkeypatch.setattr("app.tui.save_api_key", lambda key: saved.append(key) or None)
+
+    app._send("sk-or-v1-abcdef0123456789")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert saved == ["sk-or-v1-abcdef0123456789"]
+    assert app._pending_api_key is False
+    assert input_widget.password is False
+    assert input_widget.placeholder == "Type a message..."
+    assert ".env" in text
+    # The key itself must never be echoed or recorded.
+    assert "sk-or-v1-abcdef0123456789" not in text
+    assert app._history == []
+    assert all(
+        "sk-or-v1" not in str(m.get("content", "")) for m in app._messages
+    )
+
+
+def test_api_key_answer_invalid_reprompts(monkeypatch):
+    appended = []
+    app, input_widget = _onboarding_app(monkeypatch, appended)
+    app._pending_api_key = True
+    monkeypatch.setattr("app.tui.save_api_key", lambda key: "That does not look like an API key.")
+
+    app._send("oops")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert app._pending_api_key is True
+    assert "does not look like" in text
+
+
+def test_api_key_skip_dismisses_onboarding(monkeypatch):
+    appended = []
+    saved = []
+    app, input_widget = _onboarding_app(monkeypatch, appended)
+    app._pending_api_key = True
+    input_widget.password = True
+    monkeypatch.setattr("app.tui.save_api_key", lambda key: saved.append(key) or None)
+
+    app._send("skip")
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert saved == []
+    assert app._pending_api_key is False
+    assert input_widget.password is False
+    assert ".env" in text
+
+
 def _milestone_lesson() -> LessonState:
     return LessonState(
         goal="grep",

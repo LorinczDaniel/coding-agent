@@ -34,6 +34,17 @@ load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
+
+def has_api_key() -> bool:
+    return bool(API_KEY)
+
+
+def set_api_key(key: str) -> None:
+    """Activate a key for this process (module global + environ) without a restart."""
+    global API_KEY
+    API_KEY = key
+    os.environ["OPENROUTER_API_KEY"] = key
+
 MODELS = {
     "haiku": "anthropic/claude-haiku-4.5",
     "sonnet": "anthropic/claude-sonnet-4-6",

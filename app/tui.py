@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Input, Static
 
-from .agent import CONTEXT_WINDOWS, DEFAULT_MODEL, MODELS, run_agent
+from .agent import CONTEXT_WINDOWS, DEFAULT_MODEL, MODELS, has_api_key, run_agent
 from .agents import (
     COACH_PROFILE,
     DEFAULT_PROFILE,
@@ -46,6 +46,7 @@ from .lessons import (
     read_task_card,
     scaffold_lesson_workspace,
 )
+from .onboarding import SIGNUP_URL, save_api_key
 from .session import (
     DEFAULT_SESSION,
     LessonState,
@@ -281,6 +282,7 @@ class AgentApp(App):
         self._pending_confirm: asyncio.Future[bool] | None = None
         self._pending_agent_create: dict[str, object] | None = None
         self._pending_agent_switch: str | None = None
+        self._pending_api_key: bool = False
         self._pending_tool_blocks: deque[ToolBlock] = deque()
         self._history: list[str] = []
         self._history_index: int = 0
@@ -359,6 +361,8 @@ class AgentApp(App):
         else:
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
         self._update_active_context_bar()
+        if not has_api_key():
+            self._start_api_key_onboarding()
 
     def _container(self) -> VerticalScroll:
         return self.query_one("#chat-log", VerticalScroll)
@@ -521,6 +525,11 @@ class AgentApp(App):
         inp = self.query_one("#user-input", Input)
         inp.value = ""
 
+        # Handled before the history append so the key is never recorded.
+        if self._pending_api_key:
+            self._answer_api_key(text)
+            return
+
         self._history.append(text)
         self._history_index = len(self._history)
         self._history_draft = ""
@@ -644,6 +653,50 @@ class AgentApp(App):
                 (skill.name, "bold"),
                 (f" — {skill.description}", "dim"),
             )))
+
+    def _start_api_key_onboarding(self) -> None:
+        self._pending_api_key = True
+        self._append_sync(Static(Text("Welcome! One thing before we start:", style="bold")))
+        for line in [
+            "No OpenRouter API key found (checked OPENROUTER_API_KEY and .env).",
+            f"1. Create a key at {SIGNUP_URL}",
+            "2. Paste it below and press Enter — I'll save it to .env for you.",
+            "Type skip to set it up manually later.",
+        ]:
+            self._append_sync(Static(Text(f"  {line}", style="dim")))
+        inp = self.query_one("#user-input", Input)
+        inp.password = True
+        inp.placeholder = "Paste your OpenRouter API key…"
+        inp.focus()
+
+    def _finish_api_key_onboarding(self) -> None:
+        self._pending_api_key = False
+        inp = self.query_one("#user-input", Input)
+        inp.password = False
+        inp.placeholder = "Type a message..."
+        inp.focus()
+
+    def _answer_api_key(self, text: str) -> None:
+        if text.strip().lower() in ("skip", "cancel"):
+            self._finish_api_key_onboarding()
+            self._append_sync(Static(Text(
+                "Skipped. Add OPENROUTER_API_KEY to .env yourself before sending a message.",
+                style="dim",
+            )))
+            return
+        err = save_api_key(text)
+        if err:
+            self._append_sync(Static(Text(err, style="bold red")))
+            self._append_sync(Static(Text(
+                f"Paste the key from {SIGNUP_URL}, or type skip.", style="dim",
+            )))
+            return
+        self._finish_api_key_onboarding()
+        self._append_sync(Static(Text.assemble(
+            ("Key saved to ", "dim"),
+            (".env", "bold"),
+            (" — you're all set. Ask me anything!", "dim"),
+        )))
 
     def _answer_confirm(self, text: str) -> None:
         pending = self._pending_confirm
