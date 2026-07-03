@@ -75,3 +75,9 @@ must pass before a change is done.
 - OpenRouter streams can deliver a tool call's `id`/`name` in any chunk, and
   arguments may be truncated — `parse_tool_args` returning `None` is a normal
   case, not an error path to remove.
+- `docs/superpowers/` holds historical planning specs from early feature
+  work — they do not describe the current design. Source of truth is the
+  code, README.md, and this file.
+- Learning/demo projects (things built *with* the agent, like a snake game)
+  go in `playground/`, which is gitignored — never in the repo root, and
+  never mixed into the agent's own source.

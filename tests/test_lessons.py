@@ -6,6 +6,7 @@ from app.lessons import (
     hint_prompt,
     learn_goal_prompt,
     lesson_session_name,
+    scaffold_lesson_workspace,
 )
 
 # --- extract_learning_goal ---
@@ -56,6 +57,49 @@ def test_learn_goal_prompt_mentions_milestones():
 def test_hint_prompt_levels():
     assert "strength 1 of 4 (question)" in hint_prompt(1)
     assert "strength 4 of 4 (near-solution)" in hint_prompt(MAX_HINT_LEVEL)
+
+
+def test_learn_goal_prompt_with_workspace_instructs_scaffolding():
+    prompt = learn_goal_prompt("grep", workspace="lessons/grep")
+    assert "lessons/grep" in prompt
+    assert "TASK.md" in prompt
+    assert "main.py" in prompt
+    assert "TODO" in prompt
+
+
+def test_learn_goal_prompt_without_workspace_omits_scaffolding():
+    prompt = learn_goal_prompt("grep")
+    assert "TASK.md" not in prompt
+    assert "main.py" not in prompt
+
+
+# --- scaffold_lesson_workspace ---
+
+def test_scaffold_creates_workspace_with_task_card(tmp_path):
+    workspace = scaffold_lesson_workspace("grep", tmp_path)
+
+    assert workspace == tmp_path / "lessons" / "grep"
+    card = (workspace / "TASK.md").read_text(encoding="utf-8")
+    assert "grep" in card
+    assert "## Goal" in card
+    assert "## Current milestone" in card
+    assert "## Expected outcome" in card
+    assert "## How it will be checked" in card
+
+
+def test_scaffold_slugifies_goal(tmp_path):
+    workspace = scaffold_lesson_workspace("HTTP server!", tmp_path)
+    assert workspace == tmp_path / "lessons" / "http-server"
+
+
+def test_scaffold_preserves_existing_task_card(tmp_path):
+    workspace = tmp_path / "lessons" / "grep"
+    workspace.mkdir(parents=True)
+    (workspace / "TASK.md").write_text("my notes", encoding="utf-8")
+
+    scaffold_lesson_workspace("grep", tmp_path)
+
+    assert (workspace / "TASK.md").read_text(encoding="utf-8") == "my notes"
 
 
 def test_hint_level_display():

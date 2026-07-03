@@ -353,10 +353,11 @@ def test_learn_goal_switches_to_coach_and_starts_fresh(monkeypatch):
     monkeypatch.setattr(app, "_run_agent", lambda: run_calls.append(True))
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved.append((messages, name)))
     monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+    monkeypatch.setattr("app.tui.scaffold_lesson_workspace", lambda goal, root: root / "lessons" / "redis")
 
     app._handle_learn_command("/learn redis")
 
-    prompt = _learn_goal_prompt("redis")
+    prompt = _learn_goal_prompt("redis", workspace="lessons/redis")
     assert saved == [([
         {"role": "system", "content": "old system"},
         {"role": "user", "content": "old question"},
@@ -520,11 +521,69 @@ def test_new_lesson_resets_hint_level(monkeypatch):
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
     monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+    monkeypatch.setattr("app.tui.scaffold_lesson_workspace", lambda goal, root: root / "lessons" / "grep")
 
     app._handle_learn_command("/learn grep")
 
     assert app._lesson.goal == "grep"
     assert app._lesson.hint_level == 0
+
+
+def test_learn_scaffolds_workspace_and_tells_coach(monkeypatch):
+    app = _make_app()
+    container = DummyContainer()
+    scaffold_calls = []
+    appended = []
+
+    _lesson_widgets(monkeypatch, app)
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_reset_usage", lambda: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: None)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    def fake_scaffold(goal, root):
+        scaffold_calls.append((goal, root))
+        return root / "lessons" / "grep"
+
+    monkeypatch.setattr("app.tui.scaffold_lesson_workspace", fake_scaffold)
+
+    app._handle_learn_command("/learn grep")
+
+    assert scaffold_calls == [("grep", scaffold_calls[0][1])]
+    prompt = app._messages[-1]["content"]
+    assert prompt == _learn_goal_prompt("grep", workspace="lessons/grep")
+    assert "lessons/grep" in prompt
+    assert "TASK.md" in prompt
+    assert any("lessons/grep" in _rendered_text(widget) for widget in appended)
+
+
+def test_learn_continues_without_workspace_when_scaffold_fails(monkeypatch):
+    app = _make_app()
+    container = DummyContainer()
+    appended = []
+
+    _lesson_widgets(monkeypatch, app)
+    monkeypatch.setattr(app, "_container", lambda: container)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr(app, "_reset_usage", lambda: None)
+    monkeypatch.setattr(app, "_run_agent", lambda: None)
+    monkeypatch.setattr("app.tui.save_session", lambda messages, name: None)
+    monkeypatch.setattr("app.tui.save_lesson", lambda state, name: None)
+    monkeypatch.setattr("app.tui.load_system_prompt", lambda profile_name=DEFAULT_PROFILE: f"system {profile_name}")
+
+    def broken_scaffold(goal, root):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.tui.scaffold_lesson_workspace", broken_scaffold)
+
+    app._handle_learn_command("/learn grep")
+
+    assert app._lesson is not None and app._lesson.goal == "grep"
+    assert app._messages[-1]["content"] == _learn_goal_prompt("grep")
+    assert any("workspace" in _rendered_text(widget).lower() for widget in appended)
 
 
 def test_agent_command_lists_current_and_available(monkeypatch):
