@@ -182,6 +182,7 @@ debug.log
 conversation.md
 # Learning projects built with/by the agent — never part of the software itself
 playground/
+lessons/
 
 # Claude Code personal settings
 .claude/settings.local.json

@@ -1,8 +1,10 @@
 import asyncio
 import json
+import os
 import re
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from rich.markup import escape
 from rich.text import Text
@@ -36,6 +38,7 @@ from .lessons import (
     learn_goal_prompt,
     lesson_session_name,
     lesson_todos,
+    scaffold_lesson_workspace,
 )
 from .session import (
     DEFAULT_SESSION,
@@ -948,7 +951,18 @@ class AgentApp(App):
         old_session = self._session_name
         self._session_name = lesson_session_name(goal, session_exists)
         self._agent_profile = COACH_PROFILE
-        prompt = learn_goal_prompt(goal)
+        # TASK.md is scaffolded here so the task card exists even if the
+        # coach never writes the starter file it is prompted to create.
+        workspace_display: str | None = None
+        try:
+            workspace = scaffold_lesson_workspace(goal, Path.cwd())
+            workspace_display = os.path.relpath(workspace, Path.cwd()).replace(os.sep, "/")
+        except OSError as exc:
+            self._append_sync(Static(Text(
+                f"Could not create the lesson workspace ({exc}); continuing without it.",
+                style="dim",
+            )))
+        prompt = learn_goal_prompt(goal, workspace=workspace_display)
         self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
         self._messages.append({"role": "user", "content": prompt})
         self._reset_conversation_state()
@@ -964,6 +978,12 @@ class AgentApp(App):
             (self._session_name, "bold"),
             (f"; your previous conversation is saved as {old_session})", "dim"),
         )))
+        if workspace_display:
+            self._append_sync(Static(Text.assemble(
+                ("Workspace: ", "dim"),
+                (workspace_display, "bold"),
+                ("  (task card in TASK.md)", "dim"),
+            )))
         self._append_sync(Static(Text.assemble(("You: ", "bold green"), (prompt, "white"))))
         self._safe_msg_count = len(self._messages)
         self.query_one("#user-input", Input).disabled = True

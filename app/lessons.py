@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 from .session import LessonState
 
@@ -66,14 +67,25 @@ def extract_learning_goal(text: str) -> str | None:
     return None
 
 
-def learn_goal_prompt(goal: str) -> str:
-    return (
+def learn_goal_prompt(goal: str, workspace: str | None = None) -> str:
+    prompt = (
         f"I want to build my own {goal}.\n\n"
         "Create a CodeCrafters-style learning path for this goal. "
         "Break it into 5-10 small milestones, then start with task 1 only. "
         "For task 1, include the expected outcome, a small implementation target, "
         "and how we will check it. Wait for my attempt before moving to task 2."
     )
+    if workspace:
+        prompt += (
+            f"\n\nA lesson workspace exists at {workspace}/ with a TASK.md task card. "
+            "Before explaining task 1, use your Write tool to:\n"
+            f"1. Create {workspace}/main.py — a starter file with function stubs and "
+            "# TODO comments for task 1. Stubs only, never the working solution.\n"
+            f"2. Rewrite {workspace}/TASK.md so its current milestone, expected outcome, "
+            "and how-it-will-be-checked sections describe task 1.\n"
+            "Keep TASK.md up to date whenever we move to a new task."
+        )
+    return prompt
 
 
 def hint_prompt(level: int) -> str:
@@ -117,11 +129,47 @@ def current_index_from_todos(todos: list[dict], fallback: int) -> int:
     return min(fallback, len(todos) - 1)
 
 
+def lesson_slug(goal: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "-", goal.strip()).strip("-").lower() or "lesson"
+
+
+def _task_card(goal: str) -> str:
+    return (
+        f"# Lesson: {goal}\n"
+        "\n"
+        "## Goal\n"
+        f"Build my own {goal}, one small milestone at a time.\n"
+        "\n"
+        "## Current milestone\n"
+        "_The coach fills this in when task 1 starts._\n"
+        "\n"
+        "## Expected outcome\n"
+        "_The coach fills this in when task 1 starts._\n"
+        "\n"
+        "## How it will be checked\n"
+        "_The coach fills this in when task 1 starts._\n"
+    )
+
+
+def scaffold_lesson_workspace(goal: str, root: Path) -> Path:
+    """Create lessons/<slug>/ under root with a TASK.md task card.
+
+    Deterministic counterpart to the coach's prompt-driven starter file:
+    the task card always exists even if the model under-delivers. Existing
+    files are never overwritten, so re-running /learn resumes in place.
+    """
+    workspace = root / "lessons" / lesson_slug(goal)
+    workspace.mkdir(parents=True, exist_ok=True)
+    task_card = workspace / "TASK.md"
+    if not task_card.exists():
+        task_card.write_text(_task_card(goal), encoding="utf-8")
+    return workspace
+
+
 def lesson_session_name(goal: str, taken: Callable[[str], bool]) -> str:
     """Derive a fresh session name for a lesson so it never clobbers the
     conversation the learner started it from."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", goal.strip()).strip("-").lower() or "lesson"
-    base = f"lesson-{slug}"[:48]
+    base = f"lesson-{lesson_slug(goal)}"[:48]
     name = base
     counter = 2
     while taken(name):
