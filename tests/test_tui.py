@@ -399,6 +399,7 @@ def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
     )
 
     _lesson_widgets(monkeypatch, app, panel=panel, banner=banner, context_bar=context_bar)
+    monkeypatch.setattr("app.tui.next_action_hint", lambda lesson: "edit your solution, then /check")
 
     app._refresh_lesson_ui()
 
@@ -408,7 +409,12 @@ def test_lesson_ui_renders_milestones_and_hint_banner(monkeypatch):
     assert panel.display is True
     assert panel.todos == [
         {"id": 1, "title": "Parse command-line arguments", "status": "completed"},
-        {"id": 2, "title": "Search files", "status": "in-progress"},
+        {
+            "id": 2,
+            "title": "Search files",
+            "status": "in-progress",
+            "hint": "next: edit your solution, then /check",
+        },
     ]
     assert "Profile: coach" in _plain(context_bar.value)
     assert "Lesson: grep" in _plain(context_bar.value)
@@ -1077,6 +1083,7 @@ async def test_run_agent_todowrite_updates_active_lesson_milestones(monkeypatch)
     monkeypatch.setattr("app.tui.run_agent", fake_run_agent)
     monkeypatch.setattr("app.tui.save_session", lambda messages, name: saved_sessions.append((messages, name)))
     monkeypatch.setattr("app.tui.save_lesson", lambda state, name: saved_lessons.append((state, name)))
+    monkeypatch.setattr("app.tui.next_action_hint", lambda lesson: "edit your solution, then /check")
 
     await app._run_agent_turn()
 
@@ -1091,7 +1098,12 @@ async def test_run_agent_todowrite_updates_active_lesson_milestones(monkeypatch)
     )
     assert panel.todos == [
         {"id": 1, "title": "Parse arguments", "status": "completed"},
-        {"id": 2, "title": "Search files", "status": "in-progress"},
+        {
+            "id": 2,
+            "title": "Search files",
+            "status": "in-progress",
+            "hint": "next: edit your solution, then /check",
+        },
         {"id": 3, "title": "Format output", "status": "not-started"},
     ]
     assert "Lesson: grep" in _plain(banner.value)
@@ -1350,6 +1362,99 @@ async def test_run_check_turn_command_error_reenables_input(monkeypatch):
     assert turn_calls == []
     assert app._messages == [{"role": "system", "content": "sys"}]
     assert any("no shell" in _rendered_text(widget) for widget in appended)
+
+
+def _milestone_lesson() -> LessonState:
+    return LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("", "pytest -q"),
+        current_index=1,
+    )
+
+
+def test_show_milestone_renders_card_for_current_task(monkeypatch):
+    app = _make_app()
+    app._lesson = _milestone_lesson()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.next_action_hint", lambda lesson: "edit lessons/grep/main.py, then /check")
+    monkeypatch.setattr("app.tui.read_task_card", lambda goal: "# Lesson: grep\n\n## Expected outcome\nMatches print")
+
+    app.action_show_milestone(1)
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Milestone 2/2: Search files" in text
+    assert "Status: in-progress" in text
+    assert "Check: pytest -q" in text
+    assert "Next: edit lessons/grep/main.py, then /check" in text
+    assert "Expected outcome" in text
+
+
+def test_show_milestone_other_task_skips_next_and_task_card(monkeypatch):
+    app = _make_app()
+    app._lesson = _milestone_lesson()
+    appended = []
+    card_reads = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+    monkeypatch.setattr("app.tui.next_action_hint", lambda lesson: "edit lessons/grep/main.py, then /check")
+    monkeypatch.setattr("app.tui.read_task_card", lambda goal: card_reads.append(goal) or "card body")
+
+    app.action_show_milestone(0)
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "Milestone 1/2: Parse args" in text
+    assert "Status: completed" in text
+    assert "Check: not set yet" in text
+    assert "Next:" not in text
+    assert card_reads == []
+
+
+def test_show_milestone_out_of_range_is_noop(monkeypatch):
+    app = _make_app()
+    app._lesson = _milestone_lesson()
+    appended = []
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app.action_show_milestone(7)
+
+    assert appended == []
+
+
+def test_show_milestone_without_lesson_shows_plain_todo(monkeypatch):
+    app = _make_app()
+    app._lesson = None
+    panel = DummyTodoPanel()
+    panel.todos = [{"id": 1, "title": "plan next step", "status": "in-progress"}]
+    appended = []
+    monkeypatch.setattr(app, "query_one", lambda *args: panel)
+    monkeypatch.setattr(app, "_append_sync", lambda widget: appended.append(widget))
+
+    app.action_show_milestone(0)
+
+    text = "\n".join(_rendered_text(widget) for widget in appended)
+    assert "plan next step" in text
+    assert "in-progress" in text
+
+
+def test_refresh_lesson_ui_attaches_next_hint_to_current_task(monkeypatch):
+    app = _make_app()
+    app._lesson = _milestone_lesson()
+    panel = DummyTodoPanel()
+    _lesson_widgets(monkeypatch, app, panel=panel)
+    monkeypatch.setattr("app.tui.next_action_hint", lambda lesson: "edit lessons/grep/main.py, then /check")
+
+    app._refresh_lesson_ui()
+
+    assert panel.todos == [
+        {"id": 1, "title": "Parse args", "status": "completed"},
+        {
+            "id": 2,
+            "title": "Search files",
+            "status": "in-progress",
+            "hint": "next: edit lessons/grep/main.py, then /check",
+        },
+    ]
 
 
 def test_update_lesson_milestones_captures_check_commands(monkeypatch):

@@ -145,6 +145,53 @@ def test_todo_panel_uses_fallback_icon_for_unknown_status():
     assert "red" in _styles_for(rendered, "?")
 
 
+def _click_actions(text) -> list[str]:
+    return [
+        span.style.meta["@click"]
+        for span in text.spans
+        if not isinstance(span.style, str) and "@click" in span.style.meta
+    ]
+
+
+def test_todo_panel_titles_are_click_targets():
+    panel = TodoPanel()
+    panel.todos = [
+        {"title": "design api", "status": "completed"},
+        {"title": "write code", "status": "in-progress"},
+    ]
+
+    rendered = panel.render()
+
+    assert _click_actions(rendered) == ["app.show_milestone(0)", "app.show_milestone(1)"]
+
+
+def test_todo_panel_click_targets_keep_status_styling():
+    panel = TodoPanel()
+    panel.todos = [{"title": "design api", "status": "completed"}]
+
+    rendered = panel.render()
+
+    styles = " ".join(_styles_for(rendered, "design api"))
+    assert "dim" in styles
+    assert "strike" in styles
+
+
+def test_todo_panel_renders_hint_under_item():
+    panel = TodoPanel()
+    panel.todos = [
+        {"title": "write code", "status": "in-progress", "hint": "next: edit main.py, then /check"},
+        {"title": "ship it", "status": "not-started"},
+    ]
+
+    rendered = panel.render()
+
+    lines = rendered.plain.splitlines()
+    assert lines[0].endswith("write code")
+    assert "next: edit main.py, then /check" in lines[1]
+    # The hint is informational, not a click target.
+    assert _click_actions(rendered) == ["app.show_milestone(0)", "app.show_milestone(1)"]
+
+
 def test_tool_toggle_label_starts_collapsed():
     toggle = ToolToggle(3, Static("hidden"))
 

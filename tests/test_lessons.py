@@ -9,6 +9,10 @@ from app.lessons import (
     hint_prompt,
     learn_goal_prompt,
     lesson_session_name,
+    lesson_todos,
+    milestone_card,
+    next_action_hint,
+    read_task_card,
     scaffold_lesson_workspace,
 )
 from app.session import LessonState
@@ -183,6 +187,109 @@ def test_check_prompt_includes_command_output_and_verdict_request():
     assert "3 passed" in prompt
     assert "TodoWrite" in prompt
     assert "hint" in prompt.lower()
+
+
+# --- next_action_hint ---
+
+def test_next_action_hint_points_at_starter_file(tmp_path):
+    (tmp_path / "lessons" / "grep").mkdir(parents=True)
+    (tmp_path / "lessons" / "grep" / "main.py").write_text("x", encoding="utf-8")
+    lesson = LessonState(goal="grep", milestones=("Parse args",), check_commands=("pytest -q",))
+
+    assert next_action_hint(lesson, tmp_path) == "edit lessons/grep/main.py, then /check"
+
+
+def test_next_action_hint_generic_without_starter_file(tmp_path):
+    lesson = LessonState(goal="grep", milestones=("Parse args",), check_commands=("pytest -q",))
+
+    assert next_action_hint(lesson, tmp_path) == "edit your solution, then /check"
+
+
+def test_next_action_hint_without_check_command_suggests_review(tmp_path):
+    lesson = LessonState(goal="grep", milestones=("Parse args",))
+
+    assert next_action_hint(lesson, tmp_path) == "edit your solution, then ask the coach to review"
+
+
+# --- lesson_todos hint ---
+
+def test_lesson_todos_attach_hint_to_current_task():
+    lesson = LessonState(goal="grep", milestones=("Parse args", "Search files"), current_index=1)
+
+    todos = lesson_todos(lesson, next_hint="edit lessons/grep/main.py, then /check")
+
+    assert todos[0] == {"id": 1, "title": "Parse args", "status": "completed"}
+    assert todos[1] == {
+        "id": 2,
+        "title": "Search files",
+        "status": "in-progress",
+        "hint": "next: edit lessons/grep/main.py, then /check",
+    }
+
+
+def test_lesson_todos_without_hint_stay_plain():
+    lesson = LessonState(goal="grep", milestones=("Parse args",))
+
+    todos = lesson_todos(lesson)
+
+    assert todos == [{"id": 1, "title": "Parse args", "status": "in-progress"}]
+
+
+def test_lesson_todos_finished_lesson_has_no_hint():
+    lesson = LessonState(goal="grep", milestones=("Parse args",), current_index=1)
+
+    todos = lesson_todos(lesson, next_hint="edit main.py, then /check")
+
+    assert todos == [{"id": 1, "title": "Parse args", "status": "completed"}]
+
+
+# --- milestone_card ---
+
+def test_milestone_card_for_current_task_shows_check_and_next():
+    lesson = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files"),
+        check_commands=("", "pytest -q"),
+        current_index=1,
+    )
+
+    card = milestone_card(lesson, 1, next_hint="edit lessons/grep/main.py, then /check")
+
+    assert card == [
+        "Milestone 2/2: Search files",
+        "Status: in-progress",
+        "Check: pytest -q",
+        "Next: edit lessons/grep/main.py, then /check",
+    ]
+
+
+def test_milestone_card_for_other_tasks_has_no_next_line():
+    lesson = LessonState(
+        goal="grep",
+        milestones=("Parse args", "Search files", "Format output"),
+        check_commands=("echo a",),
+        current_index=1,
+    )
+
+    completed = milestone_card(lesson, 0, next_hint="edit main.py, then /check")
+    upcoming = milestone_card(lesson, 2, next_hint="edit main.py, then /check")
+
+    assert completed == ["Milestone 1/3: Parse args", "Status: completed", "Check: echo a"]
+    assert upcoming == ["Milestone 3/3: Format output", "Status: not started", "Check: not set yet"]
+
+
+# --- read_task_card ---
+
+def test_read_task_card_reads_workspace_card(tmp_path):
+    workspace = tmp_path / "lessons" / "grep"
+    workspace.mkdir(parents=True)
+    (workspace / "TASK.md").write_text("# Lesson: grep\ncard body", encoding="utf-8")
+
+    assert read_task_card("grep", tmp_path) == "# Lesson: grep\ncard body"
+
+
+def test_read_task_card_missing_returns_none(tmp_path):
+    assert read_task_card("grep", tmp_path) is None
 
 
 # --- lesson_session_name ---

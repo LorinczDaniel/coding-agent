@@ -41,6 +41,9 @@ from .lessons import (
     learn_goal_prompt,
     lesson_session_name,
     lesson_todos,
+    milestone_card,
+    next_action_hint,
+    read_task_card,
     scaffold_lesson_workspace,
 )
 from .session import (
@@ -457,7 +460,7 @@ class AgentApp(App):
             hint_level_display(self._lesson.hint_level),
         ))
         banner.display = True
-        panel.todos = lesson_todos(self._lesson)
+        panel.todos = lesson_todos(self._lesson, next_hint=next_action_hint(self._lesson))
         panel.display = True
         self._update_active_context_bar()
 
@@ -1216,6 +1219,35 @@ class AgentApp(App):
 
     def action_interrupt(self) -> None:
         self.workers.cancel_all()
+
+    def action_show_milestone(self, index: int) -> None:
+        """Show a task card for a clicked panel item in the chat log."""
+        if self._lesson is not None:
+            if not (0 <= index < len(self._lesson.milestones)):
+                return
+            is_current = index == self._lesson.current_index
+            card = milestone_card(
+                self._lesson,
+                index,
+                next_hint=next_action_hint(self._lesson) if is_current else None,
+            )
+            self._append_sync(Static(Text(card[0], style="bold")))
+            for line in card[1:]:
+                self._append_sync(Static(Text(f"  {line}", style="dim")))
+            if is_current:
+                task_card = read_task_card(self._lesson.goal)
+                if task_card:
+                    for line in task_card.rstrip().splitlines():
+                        self._append_sync(Static(Text.assemble(("│ ", "dim"), (line, "dim white"))))
+            return
+
+        todos = self.query_one("#todo-panel", TodoPanel).todos
+        if 0 <= index < len(todos):
+            item = todos[index]
+            self._append_sync(Static(Text.assemble(
+                (str(item.get("title", "")), "bold"),
+                (f"  ({item.get('status', 'unknown')})", "dim"),
+            )))
 
     @work(exclusive=True)
     async def _run_agent(self) -> None:
