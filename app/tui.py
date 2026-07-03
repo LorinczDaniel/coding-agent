@@ -360,9 +360,24 @@ class AgentApp(App):
             self._append_session_transcript(self._messages)
         else:
             self._messages = [{"role": "system", "content": load_system_prompt(self._agent_profile)}]
+            self._show_welcome()
         self._update_active_context_bar()
         if not has_api_key():
             self._start_api_key_onboarding()
+
+    def _show_welcome(self) -> None:
+        """First-run greeting shown instead of an empty chat log."""
+        self._append_sync(Static(Text("Welcome! Some things to try:", style="bold")))
+        for usage, description in (
+            ("/learn redis", "build your own Redis, one small milestone at a time"),
+            ("ask me about this codebase", 'e.g. "what does app/agent.py do?"'),
+            ("/help", "see every command"),
+        ):
+            self._append_sync(Static(Text.assemble(
+                ("  ", "dim"),
+                (usage, "bold yellow"),
+                (f"  — {description}", "dim"),
+            )))
 
     def _container(self) -> VerticalScroll:
         return self.query_one("#chat-log", VerticalScroll)
