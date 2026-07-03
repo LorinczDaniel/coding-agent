@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 import json
 import os
 import re
@@ -118,6 +119,25 @@ COMMANDS: tuple[Command, ...] = (
 )
 
 
+def match_commands(value: str) -> list[Command]:
+    """Commands whose name starts with the typed prefix (first token only).
+
+    Any whitespace after the token — including a trailing space right after
+    tab completion — means the command is finished, so no suggestions.
+    """
+    value = value.lstrip()
+    if not value.startswith("/") or any(c.isspace() for c in value):
+        return []
+    return [command for command in COMMANDS if command.name.startswith(value)]
+
+
+def closest_command(text: str) -> str | None:
+    """The registered command closest to a mistyped one, if any is close."""
+    token = text.split()[0] if text.split() else ""
+    matches = difflib.get_close_matches(token, [c.name for c in COMMANDS], n=1, cutoff=0.6)
+    return matches[0] if matches else None
+
+
 def _md_to_rich(text: str) -> str:
     s = escape(text)
     s = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/bold]', s)
@@ -203,6 +223,9 @@ class AgentApp(App):
     BINDINGS = [
         Binding("ctrl+x", "quit", "Quit", priority=True),
         Binding("escape", "interrupt", "Interrupt", priority=True),
+        # Priority so the screen's focus traversal doesn't swallow tab; the
+        # action falls back to focus_next when no suggestions are showing.
+        Binding("tab", "complete_suggestion", "Complete", priority=True, show=False),
     ]
 
     CSS = """
@@ -249,8 +272,16 @@ class AgentApp(App):
     }
 
     #bottom-bar {
-        height: 5;
+        height: auto;
         dock: bottom;
+    }
+
+    #command-suggestions {
+        height: auto;
+        padding: 0 1;
+        background: $panel;
+        border-top: solid $accent;
+        display: none;
     }
 
     #usage-bar {
@@ -283,6 +314,8 @@ class AgentApp(App):
         self._pending_agent_create: dict[str, object] | None = None
         self._pending_agent_switch: str | None = None
         self._pending_api_key: bool = False
+        self._suggestions: list[Command] = []
+        self._suggestion_index: int = 0
         self._pending_tool_blocks: deque[ToolBlock] = deque()
         self._history: list[str] = []
         self._history_index: int = 0
@@ -306,6 +339,7 @@ class AgentApp(App):
             yield VerticalScroll(id="chat-log")
             yield TodoPanel(id="todo-panel")
         with Vertical(id="bottom-bar"):
+            yield Static("", id="command-suggestions")
             yield Static(
                 format_usage(
                     0,
@@ -503,9 +537,62 @@ class AgentApp(App):
         save_lesson(self._lesson, self._session_name)
         self._refresh_lesson_ui()
 
+    def _update_suggestions(self, value: str) -> None:
+        matches = match_commands(value)
+        if not matches and not self._suggestions:
+            return
+        self._suggestions = matches
+        self._suggestion_index = 0
+        self._render_suggestions()
+
+    def _render_suggestions(self) -> None:
+        box = self.query_one("#command-suggestions", Static)
+        if not self._suggestions:
+            box.update("")
+            box.display = False
+            return
+        lines: list[Text] = []
+        for index, command in enumerate(self._suggestions):
+            usage, description = command.help_lines[0]
+            line = Text.assemble(
+                (f" {usage}", "bold yellow"),
+                (f"  {description}", "dim"),
+            )
+            if index == self._suggestion_index:
+                line.stylize("reverse")
+            lines.append(line)
+        lines.append(Text(" ↑/↓ select · tab complete", style="dim italic"))
+        box.update(Text("\n").join(lines))
+        box.display = True
+
+    def _clear_suggestions(self) -> None:
+        if not self._suggestions:
+            return
+        self._suggestions = []
+        self._render_suggestions()
+
+    def action_complete_suggestion(self) -> None:
+        if not self._suggestions:
+            self.screen.focus_next()
+            return
+        inp = self.query_one("#user-input", Input)
+        inp.value = self._suggestions[self._suggestion_index].name + " "
+        inp.cursor_position = len(inp.value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "user-input":
+            self._update_suggestions(event.value)
+
     def on_key(self, event) -> None:
         inp = self.query_one("#user-input", Input)
         if not inp.has_focus:
+            return
+        if self._suggestions and event.key in ("up", "down"):
+            event.prevent_default()
+            event.stop()
+            step = 1 if event.key == "down" else -1
+            self._suggestion_index = (self._suggestion_index + step) % len(self._suggestions)
+            self._render_suggestions()
             return
         if event.key == "up":
             if not self._history:
@@ -539,6 +626,7 @@ class AgentApp(App):
             return
         inp = self.query_one("#user-input", Input)
         inp.value = ""
+        self._clear_suggestions()
 
         # Handled before the history append so the key is never recorded.
         if self._pending_api_key:
@@ -566,13 +654,24 @@ class AgentApp(App):
                 if text == command.name or text.startswith(command.name + " "):
                     getattr(self, command.handler)(text)
                     return
-            self._append_sync(Static(Text.assemble(
+            suggestion = closest_command(text)
+            parts: list[tuple[str, str]] = [
                 ("Unknown command: ", "bold red"),
                 (text.split()[0], "bold"),
-                (". Type ", "dim"),
-                ("/help", "bold yellow"),
-                (" for the list of commands.", "dim"),
-            )))
+            ]
+            if suggestion:
+                parts.extend([
+                    (". Did you mean ", "dim"),
+                    (suggestion, "bold yellow"),
+                    ("?", "dim"),
+                ])
+            else:
+                parts.extend([
+                    (". Type ", "dim"),
+                    ("/help", "bold yellow"),
+                    (" for the list of commands.", "dim"),
+                ])
+            self._append_sync(Static(Text.assemble(*parts)))
             return
 
         inp.disabled = True

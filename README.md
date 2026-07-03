@@ -94,7 +94,7 @@ On startup the agent is told its working directory and a guess at the project ty
 | `/sessions delete <name>` | Delete a saved session |
 | `/todo-clear` | Clear the todo panel |
 
-Most commands also support a `help` subcommand (e.g. `/model help`, `/sessions help`).
+Typing `/` pops an autocomplete list above the input — arrow keys select, tab completes — and a typo like `/sesions` gets a "Did you mean /sessions?" nudge. Most commands also support a `help` subcommand (e.g. `/model help`, `/sessions help`).
 
 ### Keyboard shortcuts
 
